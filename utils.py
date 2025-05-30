@@ -10,13 +10,56 @@ from openai import OpenAI
 import requests
 import time
 import sys
+import unicodedata # Import for normalization
+import traceback # For full traceback
+
+# Set UTF-8 as default encoding
+if sys.version_info[0] >= 3:
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+# Set environment variable for proper encoding
+os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 class Agent:
+    def _clean_problematic_unicode(self, text_content):
+        if not isinstance(text_content, str):
+            if text_content is None:
+                return ""
+            try:
+                text_content = str(text_content)
+            except Exception:
+                return ""
+
+        try:
+            # NFKC normalization handles many compatibility characters
+            normalized_text = unicodedata.normalize('NFKC', text_content)
+        except TypeError:
+            normalized_text = text_content
+        
+        # Replace specific problematic quotes again, just in case normalization missed edge cases
+        # or to be absolutely sure if NFKC isn't aggressive enough for some variants.
+        normalized_text = normalized_text.replace('\u201c', '"').replace('\u201d', '"')
+        normalized_text = normalized_text.replace('\u2018', "'").replace('\u2019', "'")
+        normalized_text = normalized_text.replace('\u2013', '-').replace('\u2014', '--')
+
+        ascii_bytes = normalized_text.encode('ascii', errors='replace')
+        cleaned_string = ascii_bytes.decode('ascii')
+        
+        # Final check within the cleaner
+        if '\u201c' in cleaned_string or '\u201d' in cleaned_string :
+            # This should be impossible if encode/decode with 'replace' worked
+            cprint(f"PANIC: Smart quote still present *inside* _clean_problematic_unicode AFTER replace for: '{cleaned_string[:50]}'", "red", attrs=['bold', 'blink'])
+        return cleaned_string
+
     def __init__(self, instruction, role, examplers=None, model_info='gemini-2.0-flash', img_path=None):
         self.instruction = instruction
         self.role = role
         self.model_info = model_info
         self.img_path = img_path
+        self.is_openai_model_requiring_ascii_cleaning = self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']
+
 
         if self.model_info == 'gemini-2.0-flash':
             if 'genai_api_key' in os.environ:
@@ -25,82 +68,178 @@ class Agent:
                 raise ValueError("Gemini API key not configured. Set 'genai_api_key' environment variable.")
             self.model = genai.GenerativeModel(self.model_info)
             self._chat = self.model.start_chat(history=[])
-        elif self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:  # Support variations
+        elif self.is_openai_model_requiring_ascii_cleaning:
             api_key = os.environ.get('openai_api_key')
             if not api_key:
                 raise ValueError("OpenAI API key not found. Set 'openai_api_key' environment variable.")
-            self.client = OpenAI(api_key=api_key)
+            
+            self.client = OpenAI(
+                api_key=api_key,
+                default_headers={"Accept-Charset": "utf-8"}
+            )
+            
+            current_instruction_content = str(self.instruction)
+            if self.is_openai_model_requiring_ascii_cleaning:
+                current_instruction_content = self._clean_problematic_unicode(current_instruction_content)
+            
             self.messages = [
-                {"role": "system", "content": instruction},
+                {"role": "system", "content": current_instruction_content},
             ]
+
             if examplers is not None:
                 for exampler in examplers:
-                    self.messages.append({"role": "user", "content": exampler['question']})
-                    self.messages.append({"role": "assistant", "content": exampler['answer'] + "\n\n" + exampler['reason']})
+                    question = str(exampler.get('question', ''))
+                    answer = str(exampler.get('answer', ''))
+                    reason = str(exampler.get('reason', ''))
+
+                    if self.is_openai_model_requiring_ascii_cleaning:
+                        question = self._clean_problematic_unicode(question)
+                        answer = self._clean_problematic_unicode(answer)
+                        reason = self._clean_problematic_unicode(reason)
+                    
+                    self.messages.append({"role": "user", "content": question})
+                    self.messages.append({"role": "assistant", "content": answer + "\n\n" + reason})
         else:
             raise ValueError(f"Unsupported model_info: {self.model_info}")
 
     def chat(self, message, img_path=None, chat_mode=True):
         if self.model_info == 'gemini-2.0-flash':
+            # ... (Gemini chat remains the same, ensure cprint safety)
             for _ in range(10):
                 try:
-                    response = self._chat.send_message(message, stream=True)
+                    response_stream = self._chat.send_message(message, stream=True)
                     responses = []
-                    for chunk in response:
+                    for chunk in response_stream:
                         if hasattr(chunk, 'text'):
                             responses.append(chunk.text)
                     return "\n".join(responses)
                 except Exception as e:
-                    cprint(f"Error communicating with Gemini: {e}", "red")
-                    continue
+                    error_str = f"Error communicating with Gemini: {e}"
+                    safe_error_str = error_str.encode(sys.stderr.encoding or 'utf-8', 'replace').decode(sys.stderr.encoding or 'utf-8', 'replace')
+                    cprint(safe_error_str, "red")
+                    time.sleep(1) 
             return "Error: Failed to get response from Gemini after multiple retries."
 
-        elif self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:
-            try:
-                self.messages.append({"role": "user", "content": message})
-                
-                # Use the correct model name
-                model_name = "gpt-4o-mini"
+        elif self.is_openai_model_requiring_ascii_cleaning:
+            original_user_message_for_history = str(message) # Keep original for potential non-cleaned history if needed
+            cleaned_user_message_content = self._clean_problematic_unicode(str(message))
 
+            # self.messages already contains cleaned history for system/previous turns
+            temp_api_call_messages = [msg.copy() for msg in self.messages]
+            temp_api_call_messages.append({"role": "user", "content": cleaned_user_message_content})
+            
+            # --- Aggressive Re-Cleaning and Verification ---
+            final_api_call_messages = []
+            for i, msg_payload in enumerate(temp_api_call_messages):
+                content_to_reclean = str(msg_payload.get('content', ''))
+                re_cleaned_content = self._clean_problematic_unicode(content_to_reclean)
+                
+                final_api_call_messages.append({
+                    "role": msg_payload['role'],
+                    "content": re_cleaned_content
+                })
+                if '\u201c' in re_cleaned_content or '\u201d' in re_cleaned_content:
+                     cprint(f"DEBUG WARNING: Smart quote in re_cleaned_content for role {msg_payload['role']} at index {i} before API call: '{re_cleaned_content[:100]}...'", "yellow", force_color=True)
+            # --- End Aggressive Re-Cleaning ---
+
+            model_name = "gpt-4o-mini"
+
+            try:
                 response = self.client.chat.completions.create(
                     model=model_name,
-                    messages=self.messages,
+                    messages=final_api_call_messages,
                     temperature=0.7
                 )
                 
-                response_content = response.choices[0].message.content
-                self.messages.append({"role": "assistant", "content": response_content})
-                return response_content
+                raw_response_content = response.choices[0].message.content
+                cleaned_response_content = self._clean_problematic_unicode(raw_response_content)
+
+                # Add cleaned user message and cleaned assistant response to history
+                self.messages.append({"role": "user", "content": cleaned_user_message_content})
+                self.messages.append({"role": "assistant", "content": cleaned_response_content})
+                return raw_response_content # Return the original raw response from the API
+
+            except UnicodeEncodeError as e:
+                error_str = f"UnicodeEncodeError (CRITICAL, POST-PRECLEANING!): {e}. Original message: '{str(message)[:100]}...'"
+                safe_error_str = error_str.encode(sys.stderr.encoding or 'utf-8', 'replace').decode(sys.stderr.encoding or 'utf-8', 'replace')
+                cprint(safe_error_str, "magenta", force_color=True)
+                
+                # Print details of the payload that was attempted
+                try:
+                    problematic_payload_str = json.dumps(final_api_call_messages, ensure_ascii=False, indent=2)
+                    cprint(f"Problematic final_api_call_messages (truncated):\n{problematic_payload_str[:1000]}", "magenta")
+                except Exception as dump_err:
+                    cprint(f"Could not dump final_api_call_messages: {dump_err}", "magenta")
+
+                cprint("FULL TRACEBACK for UnicodeEncodeError:", "red", force_color=True)
+                traceback.print_exc()
+
+                return f"Error: Failed to get response from OpenAI due to UNEXPECTED UnicodeEncodeError: {str(e)}"
             except Exception as e:
-                cprint(f"Error communicating with OpenAI: {e}", "red")
+                error_str = f"Error communicating with OpenAI: {e}"
+                safe_error_str = error_str.encode(sys.stderr.encoding or 'utf-8', 'replace').decode(sys.stderr.encoding or 'utf-8', 'replace')
+                cprint(safe_error_str, "red")
+                cprint("FULL TRACEBACK for other Exception:", "red", force_color=True)
+                traceback.print_exc()
                 return f"Error: Failed to get response from OpenAI: {str(e)}"
         else:
             raise ValueError(f"Unsupported model_info in chat: {self.model_info}")
 
+    # Apply similar aggressive cleaning and traceback logic to temp_responses
     def temp_responses(self, message, img_path=None):
-        if self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:
-            try:
-                self.messages.append({"role": "user", "content": message})
-                
-                temperatures = [0.0]
-                responses = {}
-                
-                model_name = "gpt-4o-mini"
+        if self.is_openai_model_requiring_ascii_cleaning:
+            cleaned_user_message_content = self._clean_problematic_unicode(str(message))
 
+            temp_api_call_messages = [msg.copy() for msg in self.messages]
+            temp_api_call_messages.append({"role": "user", "content": cleaned_user_message_content})
+            
+            final_api_call_messages = []
+            for i, msg_payload in enumerate(temp_api_call_messages):
+                content_to_reclean = str(msg_payload.get('content', ''))
+                re_cleaned_content = self._clean_problematic_unicode(content_to_reclean)
+                final_api_call_messages.append({
+                    "role": msg_payload['role'],
+                    "content": re_cleaned_content
+                })
+                if '\u201c' in re_cleaned_content or '\u201d' in re_cleaned_content:
+                     cprint(f"DEBUG WARNING (temp_responses): Smart quote in re_cleaned_content for role {msg_payload['role']} at index {i} before API call: '{re_cleaned_content[:100]}...'", "yellow", force_color=True)
+            
+            responses = {}
+            model_name = "gpt-4o-mini"
+
+            try:
                 response = self.client.chat.completions.create(
                     model=model_name,
-                    messages=self.messages,
+                    messages=final_api_call_messages,
                     temperature=0.0
                 )
-                
-                response_content = response.choices[0].message.content
-                responses[0.0] = response_content
+                raw_response_content = response.choices[0].message.content
+                responses[0.0] = raw_response_content # Return raw API response
                 return responses
+
+            except UnicodeEncodeError as e:
+                error_str = f"UnicodeEncodeError in temp_responses (CRITICAL, POST-PRECLEANING!): {e}. Original message: '{str(message)[:100]}...'"
+                safe_error_str = error_str.encode(sys.stderr.encoding or 'utf-8', 'replace').decode(sys.stderr.encoding or 'utf-8', 'replace')
+                cprint(safe_error_str, "magenta", force_color=True)
+                try:
+                    problematic_payload_str = json.dumps(final_api_call_messages, ensure_ascii=False, indent=2)
+                    cprint(f"Problematic final_api_call_messages (temp_responses, truncated):\n{problematic_payload_str[:1000]}", "magenta")
+                except Exception as dump_err:
+                    cprint(f"Could not dump final_api_call_messages (temp_responses): {dump_err}", "magenta")
+
+                cprint("FULL TRACEBACK for UnicodeEncodeError (temp_responses):", "red", force_color=True)
+                traceback.print_exc()
+                return {0.0: f"Error: Failed due to UNEXPECTED UnicodeEncodeError: {str(e)}"}
             except Exception as e:
-                cprint(f"Error communicating with OpenAI: {e}", "red")
+                error_str = f"Error communicating with OpenAI in temp_responses: {e}"
+                safe_error_str = error_str.encode(sys.stderr.encoding or 'utf-8', 'replace').decode(sys.stderr.encoding or 'utf-8', 'replace')
+                cprint(safe_error_str, "red")
+                cprint("FULL TRACEBACK for other Exception (temp_responses):", "red", force_color=True)
+                traceback.print_exc()
                 return {0.0: f"Error: Failed to get response from OpenAI: {str(e)}"}
         
         elif self.model_info == 'gemini-2.0-flash':
+            # ... (Gemini temp_responses remains the same)
             try:
                 response_stream = self._chat.send_message(message, stream=True)
                 accumulated_response = []
@@ -109,10 +248,13 @@ class Agent:
                         accumulated_response.append(chunk.text)
                 return {0.0: "".join(accumulated_response)}
             except Exception as e:
-                cprint(f"Error communicating with Gemini for temp_responses: {e}", "red")
+                error_str = f"Error communicating with Gemini for temp_responses: {e}"
+                safe_error_str = error_str.encode(sys.stderr.encoding or 'utf-8', 'replace').decode(sys.stderr.encoding or 'utf-8', 'replace')
+                cprint(safe_error_str, "red")
                 return {0.0: "Error: Failed to get response from Gemini."}
         else:
             raise ValueError(f"Unsupported model_info in temp_responses: {self.model_info}")
+
 
 
 class Group:
@@ -663,6 +805,3 @@ def process_advanced_query(question, model_to_use, args):
     cprint(f"Overall Coordinated Final Decision: {final_response_str}", "green")
     
     return {0.0: final_response_str}
-
-
-# recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info='gpt-4o-mini')

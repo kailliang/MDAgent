@@ -6,6 +6,14 @@ from tqdm import tqdm
 from termcolor import cprint
 # from pptree import print_tree # This is not directly used in main.py, but might be used by utils
 # from prettytable import PrettyTable # This is not directly used in main.py, but might be used by utils
+import openai
+import httpx
+print(f"OpenAI library version: {openai.__version__}")
+print(f"httpx library version: {httpx.__version__}")
+import locale
+print(f"Default locale: {locale.getdefaultlocale()}")
+print(f"Preferred encoding: {locale.getpreferredencoding()}")
+
 
 # Assuming your utils.py is in the same directory or accessible via PYTHONPATH
 from utils import (
