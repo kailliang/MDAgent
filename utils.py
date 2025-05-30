@@ -6,7 +6,7 @@ from prettytable import PrettyTable
 from termcolor import cprint
 from pptree import Node
 import google.generativeai as genai
-import openai
+from openai import OpenAI
 import requests
 import time
 import sys
@@ -25,10 +25,11 @@ class Agent:
                 raise ValueError("Gemini API key not configured. Set 'genai_api_key' environment variable.")
             self.model = genai.GenerativeModel(self.model_info)
             self._chat = self.model.start_chat(history=[])
-        elif self.model_info in ['gpt-4o-mini', 'gpt-4-mini', 'gpt-4.1-mini']:  # Support variations
-            openai.api_key = os.environ.get('openai_api_key')
-            if not openai.api_key:
+        elif self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:  # Support variations
+            api_key = os.environ.get('openai_api_key')
+            if not api_key:
                 raise ValueError("OpenAI API key not found. Set 'openai_api_key' environment variable.")
+            self.client = OpenAI(api_key=api_key)
             self.messages = [
                 {"role": "system", "content": instruction},
             ]
@@ -54,40 +55,22 @@ class Agent:
                     continue
             return "Error: Failed to get response from Gemini after multiple retries."
 
-        elif self.model_info in ['gpt-4o-mini', 'gpt-4-mini', 'gpt-4.1-mini']:
+        elif self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:
             try:
                 self.messages.append({"role": "user", "content": message})
                 
                 # Use the correct model name
                 model_name = "gpt-4o-mini"
 
-                headers = {
-                    "Authorization": f"Bearer {openai.api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                data = {
-                    "model": model_name,
-                    "messages": self.messages
-                }
-                
-                # Ensure proper UTF-8 encoding
-                response = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers=headers,
-                    json=data,
-                    timeout=60
+                response = self.client.chat.completions.create(
+                    model=model_name,
+                    messages=self.messages,
+                    temperature=0.7
                 )
                 
-                if response.status_code == 200:
-                    response_json = response.json()
-                    response_content = response_json['choices'][0]['message']['content']
-                    self.messages.append({"role": "assistant", "content": response_content})
-                    return response_content
-                else:
-                    error_msg = f"API request failed with status {response.status_code}: {response.text}"
-                    cprint(f"Error communicating with OpenAI: {error_msg}", "red")
-                    return f"Error: Failed to get response from OpenAI: {error_msg}"
+                response_content = response.choices[0].message.content
+                self.messages.append({"role": "assistant", "content": response_content})
+                return response_content
             except Exception as e:
                 cprint(f"Error communicating with OpenAI: {e}", "red")
                 return f"Error: Failed to get response from OpenAI: {str(e)}"
@@ -95,7 +78,7 @@ class Agent:
             raise ValueError(f"Unsupported model_info in chat: {self.model_info}")
 
     def temp_responses(self, message, img_path=None):
-        if self.model_info in ['gpt-4o-mini', 'gpt-4-mini', 'gpt-4.1-mini']:
+        if self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:
             try:
                 self.messages.append({"role": "user", "content": message})
                 
@@ -104,33 +87,15 @@ class Agent:
                 
                 model_name = "gpt-4o-mini"
 
-                headers = {
-                    "Authorization": f"Bearer {openai.api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                data = {
-                    "model": model_name,
-                    "messages": self.messages,
-                    "temperature": 0.0
-                }
-                
-                response = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers=headers,
-                    json=data,
-                    timeout=60
+                response = self.client.chat.completions.create(
+                    model=model_name,
+                    messages=self.messages,
+                    temperature=0.0
                 )
                 
-                if response.status_code == 200:
-                    response_json = response.json()
-                    response_content = response_json['choices'][0]['message']['content']
-                    responses[0.0] = response_content
-                    return responses
-                else:
-                    error_msg = f"API request failed with status {response.status_code}: {response.text}"
-                    cprint(f"Error communicating with OpenAI: {error_msg}", "red")
-                    return {0.0: f"Error: Failed to get response from OpenAI: {error_msg}"}
+                response_content = response.choices[0].message.content
+                responses[0.0] = response_content
+                return responses
             except Exception as e:
                 cprint(f"Error communicating with OpenAI: {e}", "red")
                 return {0.0: f"Error: Failed to get response from OpenAI: {str(e)}"}
@@ -148,6 +113,7 @@ class Agent:
                 return {0.0: "Error: Failed to get response from Gemini."}
         else:
             raise ValueError(f"Unsupported model_info in temp_responses: {self.model_info}")
+
 
 class Group:
     def __init__(self, goal, members, question, examplers=None):
@@ -306,7 +272,7 @@ def setup_model(model_name):
         else:
             cprint("Error: 'genai_api_key' not found for Gemini setup.", "red")
             return False
-    elif model_name in ['gpt-4o-mini', 'gpt-4-mini', 'gpt-4.1-mini']:
+    elif model_name in ['gpt-4o-mini', 'gpt-4.1-mini']:
         if 'openai_api_key' in os.environ:
             return True
         else:
@@ -697,3 +663,6 @@ def process_advanced_query(question, model_to_use, args):
     cprint(f"Overall Coordinated Final Decision: {final_response_str}", "green")
     
     return {0.0: final_response_str}
+
+
+# recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info='gpt-4o-mini')

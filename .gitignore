@@ -42,4 +42,13 @@ Thumbs.db
 
 # Project specific
 output/
-*.log 
+*.log
+data/
+pdf/
+imgs/
+
+# Large files
+*.jsonl
+*.pdf
+*.gif
+*.png
