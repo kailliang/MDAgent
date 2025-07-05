@@ -46,6 +46,7 @@ output/
 data/
 pdf/
 imgs/
+.env
 
 # Large files
 *.jsonl

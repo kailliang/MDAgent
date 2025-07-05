@@ -1,5 +1,5 @@
-
 import os
+from dotenv import load_dotenv
 import json
 import random
 from tqdm import tqdm
@@ -14,32 +14,10 @@ import sys
 import unicodedata # For normalization
 import traceback   # For full traceback if other errors occur
 
+# Load environment variables from .env file
+load_dotenv()
+
 class Agent:
-    def _clean_problematic_unicode(self, text_content):
-        # This function is still useful for cleaning message content before sending to LLMs,
-        # especially if they are sensitive to certain Unicode characters or if you want to
-        # normalize input. However, it wasn't the cause of the API key header issue.
-        if not isinstance(text_content, str):
-            if text_content is None:
-                return ""
-            try:
-                text_content = str(text_content)
-            except Exception:
-                return ""
-
-        try:
-            normalized_text = unicodedata.normalize('NFKC', text_content)
-        except TypeError:
-            normalized_text = text_content
-        
-        normalized_text = normalized_text.replace('\u201c', '"').replace('\u201d', '"')
-        normalized_text = normalized_text.replace('\u2018', "'").replace('\u2019', "'")
-        normalized_text = normalized_text.replace('\u2013', '-').replace('\u2014', '--')
-
-        ascii_bytes = normalized_text.encode('ascii', errors='replace')
-        cleaned_string = ascii_bytes.decode('ascii')
-        
-        return cleaned_string
 
     def __init__(self, instruction, role, examplers=None, model_info='gemini-2.0-flash', img_path=None):
         self.instruction = instruction
@@ -47,13 +25,11 @@ class Agent:
         self.model_info = model_info
         self.img_path = img_path
 
-        if self.model_info == 'gemini-2.0-flash':
+        if self.model_info in ['gemini-2.5-flash', 'gemini-2.0-flash']:
             if 'genai_api_key' in os.environ:
                 genai.configure(api_key=os.environ['genai_api_key'])
             else:
-                # Check your environment variable name for Gemini. The script uses 'genai_api_key'.
-                # The problem was with 'openai_api_key' (lowercase 'o').
-                raise ValueError("Gemini API key not configured. Set 'genai_api_key' environment variable.")
+                raise ValueError("Gemini API key not configured. Set 'genai_api_key' in .env file or environment variables.")
             self.model = genai.GenerativeModel(self.model_info)
             self._chat = self.model.start_chat(history=[])
         elif self.model_info in ['gpt-4o-mini', 'gpt-4.1-mini']:
@@ -83,8 +59,34 @@ class Agent:
         else:
             raise ValueError(f"Unsupported model_info: {self.model_info}")
 
+    def _clean_problematic_unicode(self, text_content):
+        # This function is still useful for cleaning message content before sending to LLMs,
+        # especially if they are sensitive to certain Unicode characters or if you want to
+        # normalize input. However, it wasn't the cause of the API key header issue.
+        if not isinstance(text_content, str):
+            if text_content is None:
+                return ""
+            try:
+                text_content = str(text_content)
+            except Exception:
+                return ""
+
+        try:
+            normalized_text = unicodedata.normalize('NFKC', text_content)
+        except TypeError:
+            normalized_text = text_content
+        
+        normalized_text = normalized_text.replace('\u201c', '"').replace('\u201d', '"')
+        normalized_text = normalized_text.replace('\u2018', "'").replace('\u2019', "'")
+        normalized_text = normalized_text.replace('\u2013', '-').replace('\u2014', '--')
+
+        ascii_bytes = normalized_text.encode('ascii', errors='replace')
+        cleaned_string = ascii_bytes.decode('ascii')
+        
+        return cleaned_string
+    
     def chat(self, message, img_path=None, chat_mode=True):
-        if self.model_info == 'gemini-2.0-flash':
+        if self.model_info in ['gemini-2.5-flash', 'gemini-2.0-flash']:
             for _ in range(10):
                 try:
                     # Gemini expects UTF-8 strings for messages.
@@ -168,7 +170,7 @@ class Agent:
                 traceback.print_exc()
                 return {0.0: f"Error: Failed to get response from OpenAI: {str(e)}"}
         
-        elif self.model_info == 'gemini-2.0-flash':
+        elif self.model_info in ['gemini-2.5-flash', 'gemini-2.0-flash']:
             try:
                 response_stream = self._chat.send_message(str(message), stream=True)
                 accumulated_response = []
@@ -335,7 +337,7 @@ def parse_group_info(group_info):
     return parsed_info
 
 def setup_model(model_name):
-    if 'gemini-2.0-flash' == model_name:
+    if model_name in ['gemini-2.5-flash', 'gemini-2.0-flash']:
         if 'genai_api_key' in os.environ:
             genai.configure(api_key=os.environ['genai_api_key'])
             return True
@@ -534,8 +536,8 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
 
     print()
 
-    num_rounds = 5
-    num_turns = 5
+    num_rounds = 2
+    num_turns = 3
     num_active_agents = len(medical_agents_list)
 
     interaction_log = {f'Round {r}': {f'Turn {t}': {f'Agent {s}': {f'Agent {trg}': None for trg in range(1, num_active_agents + 1)} for s in range(1, num_active_agents + 1)} for t in range(1, num_turns + 1)} for r in range(1, num_rounds + 1)}
@@ -733,3 +735,6 @@ def process_advanced_query(question, model_to_use, args):
     cprint(f"Overall Coordinated Final Decision: {final_response_str}", "green")
     
     return {0.0: final_response_str}
+
+
+# round
