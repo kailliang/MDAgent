@@ -17,6 +17,35 @@ import traceback   # For full traceback if other errors occur
 # Load environment variables from .env file
 load_dotenv()
 
+# Global token usage tracking
+GLOBAL_TOKEN_USAGE = {
+    'total_input_tokens': 0,
+    'total_output_tokens': 0,
+    'sample_usage': []
+}
+
+def add_to_global_usage(input_tokens, output_tokens, sample_id=None):
+    """Add token usage to global tracking"""
+    GLOBAL_TOKEN_USAGE['total_input_tokens'] += input_tokens
+    GLOBAL_TOKEN_USAGE['total_output_tokens'] += output_tokens
+    if sample_id is not None:
+        GLOBAL_TOKEN_USAGE['sample_usage'].append({
+            'sample_id': sample_id,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'total_tokens': input_tokens + output_tokens
+        })
+
+def get_global_token_usage():
+    """Get global token usage statistics"""
+    return GLOBAL_TOKEN_USAGE.copy()
+
+def reset_global_token_usage():
+    """Reset global token usage counters"""
+    GLOBAL_TOKEN_USAGE['total_input_tokens'] = 0
+    GLOBAL_TOKEN_USAGE['total_output_tokens'] = 0
+    GLOBAL_TOKEN_USAGE['sample_usage'] = []
+
 class Agent:
 
     def __init__(self, instruction, role, examplers=None, model_info='gemini-2.5-flash-lite-preview-06-17', img_path=None):
@@ -24,6 +53,10 @@ class Agent:
         self.role = role
         self.model_info = model_info
         self.img_path = img_path
+        
+        # Initialize token usage tracking
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
 
         if self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             if 'genai_api_key' in os.environ:
@@ -90,12 +123,16 @@ class Agent:
             for _ in range(10):
                 try:
                     # Gemini expects UTF-8 strings for messages.
-                    response_stream = self._chat.send_message(str(message), stream=True)
-                    responses = []
-                    for chunk in response_stream:
-                        if hasattr(chunk, 'text'):
-                            responses.append(chunk.text)
-                    return "\n".join(responses)
+                    response = self._chat.send_message(str(message))
+                    
+                    # Track token usage for Gemini
+                    if hasattr(response, 'usage_metadata'):
+                        if hasattr(response.usage_metadata, 'prompt_token_count'):
+                            self.total_input_tokens += response.usage_metadata.prompt_token_count
+                        if hasattr(response.usage_metadata, 'candidates_token_count'):
+                            self.total_output_tokens += response.usage_metadata.candidates_token_count
+                    
+                    return response.text
                 except Exception as e:
                     # Safe cprint for error messages
                     error_str = f"Error communicating with Gemini: {e}"
@@ -122,6 +159,11 @@ class Agent:
                     messages=api_call_messages,
                     temperature=0.7
                 )
+                
+                # Track token usage for OpenAI
+                if hasattr(response, 'usage'):
+                    self.total_input_tokens += response.usage.prompt_tokens
+                    self.total_output_tokens += response.usage.completion_tokens
                 
                 raw_response_content = response.choices[0].message.content
                 # cleaned_response_content = self._clean_problematic_unicode(raw_response_content) # Potentially remove
@@ -158,6 +200,12 @@ class Agent:
                     messages=api_call_messages,
                     temperature=0.0
                 )
+                
+                # Track token usage for OpenAI
+                if hasattr(response, 'usage'):
+                    self.total_input_tokens += response.usage.prompt_tokens
+                    self.total_output_tokens += response.usage.completion_tokens
+                
                 raw_response_content = response.choices[0].message.content
                 responses[0.0] = raw_response_content
                 return responses
@@ -172,12 +220,16 @@ class Agent:
         
         elif self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             try:
-                response_stream = self._chat.send_message(str(message), stream=True)
-                accumulated_response = []
-                for chunk in response_stream:
-                    if hasattr(chunk, 'text'):
-                        accumulated_response.append(chunk.text)
-                return {0.0: "".join(accumulated_response)}
+                response = self._chat.send_message(str(message))
+                
+                # Track token usage for Gemini
+                if hasattr(response, 'usage_metadata'):
+                    if hasattr(response.usage_metadata, 'prompt_token_count'):
+                        self.total_input_tokens += response.usage_metadata.prompt_token_count
+                    if hasattr(response.usage_metadata, 'candidates_token_count'):
+                        self.total_output_tokens += response.usage_metadata.candidates_token_count
+                
+                return {0.0: response.text}
             except Exception as e:
                 error_str = f"Error communicating with Gemini for temp_responses: {e}"
                 safe_error_str = error_str.encode(getattr(sys.stderr, 'encoding', 'utf-8') or 'utf-8', 'replace').decode(getattr(sys.stderr, 'encoding', 'utf-8') or 'utf-8', 'replace')
@@ -185,6 +237,19 @@ class Agent:
                 return {0.0: "Error: Failed to get response from Gemini."}
         else:
             raise ValueError(f"Unsupported model_info in temp_responses: {self.model_info}")
+    
+    def get_token_usage(self):
+        """Return current token usage for this agent"""
+        return {
+            'input_tokens': self.total_input_tokens,
+            'output_tokens': self.total_output_tokens,
+            'total_tokens': self.total_input_tokens + self.total_output_tokens
+        }
+    
+    def reset_token_usage(self):
+        """Reset token usage counters"""
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
 
 
 class Group:
@@ -364,6 +429,7 @@ def load_data(dataset):
     base_data_path = os.path.join(os.path.dirname(__file__), 'data')
 
     test_path = os.path.join(base_data_path, dataset, 'test.jsonl')
+    print(f"[DEBUG] Loading test data from: {test_path}")
     try:
         with open(test_path, 'r', encoding='utf-8') as file:
             for line in file:
@@ -378,6 +444,7 @@ def load_data(dataset):
                 examplers.append(json.loads(line))
     except FileNotFoundError:
         cprint(f"Error: Train data file (exemplars) not found at {train_path}", "red")
+    print(f"[DEBUG] test_qa loaded: {len(test_qa)}")
     return test_qa, examplers
 
 def create_question(sample, dataset):
@@ -393,7 +460,7 @@ def create_question(sample, dataset):
 
 def determine_difficulty(question, difficulty):
     if difficulty != 'adaptive':
-        return difficulty
+        return difficulty, 0, 0  # Return difficulty with zero token usage for non-adaptive
     
     difficulty_prompt = f"""Now, given the medical query as below, you need to decide the difficulty/complexity of it:
 {question}
@@ -407,17 +474,26 @@ Please indicate the difficulty/complexity of the medical query among below optio
     medical_agent.chat('You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.')
     response = medical_agent.chat(difficulty_prompt)
 
+    # Get token usage from the difficulty determination agent
+    difficulty_agent_usage = medical_agent.get_token_usage()
+    difficulty_input_tokens = difficulty_agent_usage['input_tokens']
+    difficulty_output_tokens = difficulty_agent_usage['output_tokens']
+
     if 'basic' in response.lower() or '1)' in response.lower():
-        return 'basic'
+        return 'basic', difficulty_input_tokens, difficulty_output_tokens
     elif 'intermediate' in response.lower() or '2)' in response.lower():
-        return 'intermediate'
+        return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
     elif 'advanced' in response.lower() or '3)' in response.lower():
-        return 'advanced'
+        return 'advanced', difficulty_input_tokens, difficulty_output_tokens
     else:
         cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
-        return 'intermediate'
+        return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, examplers_data, model_to_use, args):
+    # Reset token usage for this sample
+    sample_input_tokens = 0
+    sample_output_tokens = 0
+    
     medical_agent_for_reasoning = Agent(instruction='You are a helpful medical agent.', role='medical expert', model_info=model_to_use)
     
     new_examplers_list = []
@@ -448,9 +524,20 @@ def process_basic_query(question, examplers_data, model_to_use, args):
     prompt = "The following are multiple choice questions (with answers) about medical knowledge. Let's think step by step.\n\n**Question:** {}\nAnswer: "
     final_decision_dict = single_agent.temp_responses(prompt.format(question), img_path=None)
     
-    return final_decision_dict
+    # Calculate token usage for this sample
+    reasoning_usage = medical_agent_for_reasoning.get_token_usage()
+    single_agent_usage = single_agent.get_token_usage()
+    
+    sample_input_tokens = reasoning_usage['input_tokens'] + single_agent_usage['input_tokens']
+    sample_output_tokens = reasoning_usage['output_tokens'] + single_agent_usage['output_tokens']
+    
+    return final_decision_dict, sample_input_tokens, sample_output_tokens
 
 def process_intermediate_query(question, examplers_data, model_to_use, args):
+    # Reset token usage for this sample
+    sample_input_tokens = 0
+    sample_output_tokens = 0
+    
     cprint("[INFO] Step 1. Expert Recruitment", 'yellow', attrs=['blink'])
     recruit_prompt = "You are an experienced medical expert who recruits a group of experts with diverse identity and ask them to discuss and solve the given medical query."
     
@@ -667,9 +754,32 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
     print(f"{'\U0001F468\u200D\u2696\uFE0F'} moderator's final decision: {majority_vote_response}")
     print()
 
-    return final_decision_output
+    # Calculate total token usage for this sample
+    recruiter_usage = recruiter_agent.get_token_usage()
+    sample_input_tokens += recruiter_usage['input_tokens']
+    sample_output_tokens += recruiter_usage['output_tokens']
+    
+    for agent in medical_agents_list:
+        agent_usage = agent.get_token_usage()
+        sample_input_tokens += agent_usage['input_tokens']
+        sample_output_tokens += agent_usage['output_tokens']
+    
+    moderator_usage = moderator.get_token_usage()
+    sample_input_tokens += moderator_usage['input_tokens']
+    sample_output_tokens += moderator_usage['output_tokens']
+    
+    if 'reason_generation_agent' in locals():
+        reason_usage = reason_generation_agent.get_token_usage()
+        sample_input_tokens += reason_usage['input_tokens']
+        sample_output_tokens += reason_usage['output_tokens']
+
+    return final_decision_output, sample_input_tokens, sample_output_tokens
 
 def process_advanced_query(question, model_to_use, args):
+    # Reset token usage for this sample
+    sample_input_tokens = 0
+    sample_output_tokens = 0
+    
     cprint("[STEP 1] Recruitment of Multidisciplinary Teams (MDTs)", 'yellow', attrs=['blink'])
     group_instances_list = []
 
@@ -739,7 +849,23 @@ def process_advanced_query(question, model_to_use, args):
     final_response_str = final_decision_dict_adv.get(0.0, "Error: Final coordinator failed to provide a decision.")
     cprint(f"Overall Coordinated Final Decision: {final_response_str}", "green")
     
-    return {0.0: final_response_str}
+    # Calculate total token usage for this sample
+    recruiter_usage = recruiter_agent_mdt.get_token_usage()
+    sample_input_tokens += recruiter_usage['input_tokens']
+    sample_output_tokens += recruiter_usage['output_tokens']
+    
+    # Track token usage from all group members (including all agents in each group)
+    for group in group_instances_list:
+        for member in group.members:
+            member_usage = member.get_token_usage()
+            sample_input_tokens += member_usage['input_tokens']
+            sample_output_tokens += member_usage['output_tokens']
+    
+    final_agent_usage = final_decision_agent.get_token_usage()
+    sample_input_tokens += final_agent_usage['input_tokens']
+    sample_output_tokens += final_agent_usage['output_tokens']
+    
+    return {0.0: final_response_str}, sample_input_tokens, sample_output_tokens
 
 
 # round

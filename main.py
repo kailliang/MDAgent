@@ -10,13 +10,14 @@ from utils import (
     # Agent, Group, parse_hierarchy, parse_group_info, # Not directly used in main
     setup_model,
     load_data, create_question, determine_difficulty,
-    process_basic_query, process_intermediate_query, process_advanced_query
+    process_basic_query, process_intermediate_query, process_advanced_query,
+    add_to_global_usage, get_global_token_usage, reset_global_token_usage
 )
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='medqa', help="Dataset name (e.g., 'medqa')")
-parser.add_argument('--model', type=str, default='gemini-2.0-flash',
-                    help="Model to use (e.g., 'gemini-2.0-flash', 'gpt-4.1-mini')")
+parser.add_argument('--model', type=str, default='gemini-2.5-flash-lite-preview-06-17',
+                    help="Model to use (e.g., 'gemini-2.5-flash-lite-preview-06-17')")
 parser.add_argument('--difficulty', type=str, default='adaptive',
                     choices=['adaptive', 'basic', 'intermediate', 'advanced'],
                     help="Difficulty processing mode")
@@ -33,6 +34,9 @@ if not configured_successfully: # Check the boolean
     cprint(f"Failed to configure model {args.model}. Please check API keys and settings. Exiting.", "red")
     exit(1)
 cprint(f"[INFO] Model {args.model} configured successfully.", "green")
+
+# Reset global token usage at the start
+reset_global_token_usage()
 
 
 # Load data
@@ -67,17 +71,26 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
 
     # Determine difficulty using the utility function
     # The 'args.difficulty' string is passed, and 'determine_difficulty' handles 'adaptive' logic.
-    # 'determine_difficulty' uses 'gpt-4.1-mini' internally for adaptive assessment as per utils.py update.
-    difficulty_level = determine_difficulty(question, args.difficulty)
+    # 'determine_difficulty' uses 'gemini-2.5-flash-lite-preview-06-17' internally for adaptive assessment.
+    difficulty_level, difficulty_input_tokens, difficulty_output_tokens = determine_difficulty(question, args.difficulty)
     cprint(f"Determined difficulty: {difficulty_level}", "yellow")
 
     final_decision = None
+    sample_input_tokens = difficulty_input_tokens
+    sample_output_tokens = difficulty_output_tokens
+    
     if difficulty_level == 'basic':
-        final_decision = process_basic_query(question, examplers, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_basic_query(question, examplers, args.model, args)
+        sample_input_tokens += process_input_tokens
+        sample_output_tokens += process_output_tokens
     elif difficulty_level == 'intermediate':
-        final_decision = process_intermediate_query(question, examplers, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_intermediate_query(question, examplers, args.model, args)
+        sample_input_tokens += process_input_tokens
+        sample_output_tokens += process_output_tokens
     elif difficulty_level == 'advanced':
-        final_decision = process_advanced_query(question, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_advanced_query(question, args.model, args)
+        sample_input_tokens += process_input_tokens
+        sample_output_tokens += process_output_tokens
     else:
         cprint(f"Warning: Unknown difficulty level '{difficulty_level}' determined for sample {no+1}. Skipping.", "red")
         continue
@@ -92,11 +105,21 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
             'answer': sample.get('answer', None),
             'options': sample.get('options', None) if args.dataset == 'medqa' else None,
             'response': "Error: No decision processed",
-            'difficulty': difficulty_level
+            'difficulty': difficulty_level,
+            'token_usage': {
+                'input_tokens': 0,
+                'output_tokens': 0,
+                'total_tokens': 0
+            }
         })
         continue
 
 
+    # Add token usage to global tracking
+    add_to_global_usage(sample_input_tokens, sample_output_tokens, no+1)
+    
+    # Print per-sample token usage
+    cprint(f"Sample {no+1} Token Usage - Input: {sample_input_tokens}, Output: {sample_output_tokens}, Total: {sample_input_tokens + sample_output_tokens}", "cyan")
     cprint(f"Final decision for sample {no+1}: {str(final_decision)[:100]}...", "green")
 
     if args.dataset == 'medqa':
@@ -107,7 +130,12 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
             'answer': sample['answer'],
             'options': sample['options'],
             'response': final_decision, # This will be a dict like {0.0: "response_str"} or {'majority_vote': "response_str"}
-            'difficulty': difficulty_level
+            'difficulty': difficulty_level,
+            'token_usage': {
+                'input_tokens': sample_input_tokens,
+                'output_tokens': sample_output_tokens,
+                'total_tokens': sample_input_tokens + sample_output_tokens
+            }
         })
     else: # Generic result structure for other datasets
         results.append({
@@ -115,7 +143,12 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
             'question': question,
             'label': sample.get('label', None), # Assuming other datasets might have a 'label' field
             'response': final_decision,
-            'difficulty': difficulty_level
+            'difficulty': difficulty_level,
+            'token_usage': {
+                'input_tokens': sample_input_tokens,
+                'output_tokens': sample_output_tokens,
+                'total_tokens': sample_input_tokens + sample_output_tokens
+            }
         })
 
 
@@ -133,5 +166,21 @@ try:
     cprint(f"\n[INFO] Results saved to: {output_path}", "green")
 except Exception as e:
     cprint(f"\n[ERROR] Failed to save results to {output_path}: {e}", "red")
+
+# Print total token usage summary
+global_usage = get_global_token_usage()
+cprint("\n" + "="*50, "magenta")
+cprint("TOTAL TOKEN USAGE SUMMARY", "magenta")
+cprint("="*50, "magenta")
+cprint(f"Total Input Tokens: {global_usage['total_input_tokens']:,}", "yellow")
+cprint(f"Total Output Tokens: {global_usage['total_output_tokens']:,}", "yellow")
+cprint(f"Total Tokens: {global_usage['total_input_tokens'] + global_usage['total_output_tokens']:,}", "yellow")
+cprint(f"Processed {len(global_usage['sample_usage'])} samples", "yellow")
+if global_usage['sample_usage']:
+    avg_input = global_usage['total_input_tokens'] / len(global_usage['sample_usage'])
+    avg_output = global_usage['total_output_tokens'] / len(global_usage['sample_usage'])
+    cprint(f"Average Input Tokens per Sample: {avg_input:.1f}", "yellow")
+    cprint(f"Average Output Tokens per Sample: {avg_output:.1f}", "yellow")
+cprint("="*50, "magenta")
 
 cprint("[INFO] Processing complete.", "magenta")
