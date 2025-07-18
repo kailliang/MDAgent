@@ -19,13 +19,13 @@ load_dotenv()
 
 class Agent:
 
-    def __init__(self, instruction, role, examplers=None, model_info='gemini-2.0-flash', img_path=None):
+    def __init__(self, instruction, role, examplers=None, model_info='gemini-2.5-flash-lite-preview-06-17', img_path=None):
         self.instruction = instruction
         self.role = role
         self.model_info = model_info
         self.img_path = img_path
 
-        if self.model_info in ['gemini-2.5-flash', 'gemini-2.0-flash']:
+        if self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             if 'genai_api_key' in os.environ:
                 genai.configure(api_key=os.environ['genai_api_key'])
             else:
@@ -86,7 +86,7 @@ class Agent:
         return cleaned_string
     
     def chat(self, message, img_path=None, chat_mode=True):
-        if self.model_info in ['gemini-2.5-flash', 'gemini-2.0-flash']:
+        if self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             for _ in range(10):
                 try:
                     # Gemini expects UTF-8 strings for messages.
@@ -170,7 +170,7 @@ class Agent:
                 traceback.print_exc()
                 return {0.0: f"Error: Failed to get response from OpenAI: {str(e)}"}
         
-        elif self.model_info in ['gemini-2.5-flash', 'gemini-2.0-flash']:
+        elif self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             try:
                 response_stream = self._chat.send_message(str(message), stream=True)
                 accumulated_response = []
@@ -337,7 +337,11 @@ def parse_group_info(group_info):
     return parsed_info
 
 def setup_model(model_name):
-    if model_name in ['gemini-2.5-flash', 'gemini-2.0-flash']:
+    # Normalize model_name to avoid issues with whitespace/case
+    original_model_name = model_name
+    model_name = str(model_name).strip()
+    print(f"[DEBUG] setup_model received model_name: '{original_model_name}' (normalized: '{model_name}')")
+    if model_name in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
         if 'genai_api_key' in os.environ:
             genai.configure(api_key=os.environ['genai_api_key'])
             return True
@@ -351,7 +355,8 @@ def setup_model(model_name):
             cprint("Error: 'openai_api_key' not found for OpenAI setup.", "red")
             return False
     else:
-        raise ValueError(f"Unsupported model for setup: {model_name}")
+        supported = ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17', 'gpt-4o-mini', 'gpt-4.1-mini']
+        raise ValueError(f"Unsupported model for setup: '{original_model_name}'. Supported models: {supported}")
 
 def load_data(dataset):
     test_qa = []
@@ -398,7 +403,7 @@ Please indicate the difficulty/complexity of the medical query among below optio
 2) intermediate: number of medical experts with different expertise should dicuss and make final decision.
 3) advanced: multiple teams of clinicians from different departments need to collaborate with each other to make final decision."""
     
-    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.', role='medical expert', model_info='gemini-2.0-flash')
+    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.', role='medical expert', model_info='gemini-2.5-flash-lite-preview-06-17')
     medical_agent.chat('You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.')
     response = medical_agent.chat(difficulty_prompt)
 
@@ -449,7 +454,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
     cprint("[INFO] Step 1. Expert Recruitment", 'yellow', attrs=['blink'])
     recruit_prompt = "You are an experienced medical expert who recruits a group of experts with diverse identity and ask them to discuss and solve the given medical query."
     
-    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info='gemini-2.0-flash')
+    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info='gemini-2.5-flash-lite-preview-06-17')
     recruiter_agent.chat(recruit_prompt)
     
     num_experts_to_recruit = 5
