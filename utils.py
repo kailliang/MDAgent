@@ -151,11 +151,11 @@ class Agent:
             # Use original user message content if aggressive cleaning isn't needed
             api_call_messages.append({"role": "user", "content": current_user_message_content})
             
-            model_name = "gpt-4o-mini"
+            # model_name = "gpt-4o-mini"
 
             try:
                 response = self.client.chat.completions.create(
-                    model=model_name,
+                    model=self.model_info,
                     messages=api_call_messages,
                     temperature=0.7
                 )
@@ -192,11 +192,11 @@ class Agent:
             api_call_messages.append({"role": "user", "content": current_user_message_content})
             
             responses = {}
-            model_name = "gpt-4o-mini"
+            # model_name = "gpt-4o-mini"
 
             try:
                 response = self.client.chat.completions.create(
-                    model=model_name,
+                    model=self.model_info,
                     messages=api_call_messages,
                     temperature=0.0
                 )
@@ -253,14 +253,14 @@ class Agent:
 
 
 class Group:
-    def __init__(self, goal, members, question, examplers=None):
+    def __init__(self, goal, members, question, examplers=None, model_info='gemini-2.5-flash-lite-preview-06-17'):
         self.goal = goal
         self.members = []
         for member_info in members:
             # Group members use gpt-4o-mini
             _agent = Agent('You are a {} who {}.'.format(member_info['role'], member_info['expertise_description'].lower()), 
                            role=member_info['role'], 
-                           model_info='gpt-4o-mini')
+                           model_info=model_info)
             _agent.chat('You are a {} who {}.'.format(member_info['role'], member_info['expertise_description'].lower()))
             self.members.append(_agent)
         self.question = question
@@ -628,8 +628,8 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
 
     print()
 
-    num_rounds = 2
-    num_turns = 3
+    num_rounds = 5
+    num_turns = 5
     num_active_agents = len(medical_agents_list)
 
     interaction_log = {f'Round {r}': {f'Turn {t}': {f'Agent {s}': {f'Agent {trg}': None for trg in range(1, num_active_agents + 1)} for s in range(1, num_active_agents + 1)} for t in range(1, num_turns + 1)} for r in range(1, num_rounds + 1)}
@@ -785,7 +785,7 @@ def process_advanced_query(question, model_to_use, args):
 
     recruit_prompt = f"""You are an experienced medical expert. Given the complex medical query, you need to organize Multidisciplinary Teams (MDTs) and the members in MDT to make accurate and robust answer."""
 
-    recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info='gpt-4o-mini')
+    recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent_mdt.chat(recruit_prompt)
 
     num_teams_to_form = 3
@@ -803,7 +803,7 @@ def process_advanced_query(question, model_to_use, args):
             print(f" Member {i2+1} ({member_item['role']}): {member_item['expertise_description']}")
         print()
 
-        group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question)
+        group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question, model_info=model_to_use)
         group_instances_list.append(group_instance_obj)
 
     cprint("[STEP 2] MDT Internal Interactions and Assessments", 'yellow', attrs=['blink'])
