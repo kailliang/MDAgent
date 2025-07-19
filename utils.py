@@ -319,10 +319,8 @@ class Group:
             else:
                 gathered_investigation = delivery
 
-            if self.examplers is not None:
-                investigation_prompt = f"""The gathered investigation from your assistant clinicians (or your own initial assessment if working alone) is as follows:\n{gathered_investigation}.\n\nNow, after reviewing the following example cases, return your answer to the medical query among the option provided:\n\n{self.examplers}\nQuestion: {self.question}"""
-            else:
-                investigation_prompt = f"""The gathered investigation from your assistant clinicians (or your own initial assessment if working alone) is as follows:\n{gathered_investigation}.\n\nNow, return your answer to the medical query among the option provided.\n\nQuestion: {self.question}"""
+            # Direct reasoning without few-shot examples
+            investigation_prompt = f"""The gathered investigation from your assistant clinicians (or your own initial assessment if working alone) is as follows:\n{gathered_investigation}.\n\nNow, return your answer to the medical query among the option provided.\n\nQuestion: {self.question}"""
 
             response = lead_member.chat(investigation_prompt)
             return response
@@ -494,42 +492,22 @@ def process_basic_query(question, examplers_data, model_to_use, args):
     sample_input_tokens = 0
     sample_output_tokens = 0
     
-    medical_agent_for_reasoning = Agent(instruction='You are a helpful medical agent.', role='medical expert', model_info=model_to_use)
-    
-    new_examplers_list = []
-    if args.dataset == 'medqa':
-        random.shuffle(examplers_data)
-        for ie, exampler_item in enumerate(examplers_data[:5]):
-            tmp_exampler = {}
-            exampler_question = exampler_item['question']
-            choices = [f"({k}) {v}" for k, v in exampler_item['options'].items()]
-            random.shuffle(choices)
-            exampler_question += " " + ' '.join(choices)
-            exampler_answer = f"Answer: ({exampler_item['answer_idx']}) {exampler_item['answer']}\n\n"
-            
-            prompt = "You are a helpful medical agent. Below is an example of medical knowledge question and answer. After reviewing the below medical question and answering, can you provide 1-2 sentences of reason that support the answer as if you didn't know the answer ahead?\n\nQuestion: {}\n\nAnswer: {}"
-            exampler_reason = medical_agent_for_reasoning.chat(prompt.format(exampler_question, exampler_answer.strip()))
-
-            tmp_exampler['question'] = exampler_question
-            tmp_exampler['reason'] = exampler_reason
-            tmp_exampler['answer'] = exampler_answer.strip()
-            new_examplers_list.append(tmp_exampler)
-    
-    single_agent = Agent(instruction='You are a helpful assistant that answers multiple choice questions about medical knowledge.', 
-                         role='medical expert', 
-                         examplers=new_examplers_list, 
-                         model_info=model_to_use)
+    # Create single agent without few-shot examples - direct reasoning
+    single_agent = Agent(
+        instruction='You are a helpful assistant that answers multiple choice questions about medical knowledge.', 
+        role='medical expert', 
+        examplers=None,  # No few-shot examples
+        model_info=model_to_use
+    )
     single_agent.chat('You are a helpful assistant that answers multiple choice questions about medical knowledge.')
     
     prompt = "The following are multiple choice questions (with answers) about medical knowledge. Let's think step by step.\n\n**Question:** {}\nAnswer: "
     final_decision_dict = single_agent.temp_responses(prompt.format(question), img_path=None)
     
-    # Calculate token usage for this sample
-    reasoning_usage = medical_agent_for_reasoning.get_token_usage()
+    # Calculate token usage for this sample (only single agent)
     single_agent_usage = single_agent.get_token_usage()
-    
-    sample_input_tokens = reasoning_usage['input_tokens'] + single_agent_usage['input_tokens']
-    sample_output_tokens = reasoning_usage['output_tokens'] + single_agent_usage['output_tokens']
+    sample_input_tokens = single_agent_usage['input_tokens']
+    sample_output_tokens = single_agent_usage['output_tokens']
     
     return final_decision_dict, sample_input_tokens, sample_output_tokens
 
@@ -598,22 +576,6 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
         except Exception as e:
             cprint(f"Error printing agent info: {agent_tuple} - {e}", "red")
 
-    fewshot_examplers_str = ""
-    reason_generation_agent = recruiter_agent
-    if args.dataset == 'medqa':
-        random.shuffle(examplers_data)
-        for ie, exampler_item in enumerate(examplers_data[:5]):
-            exampler_question_str = f"[Example {ie+1}]\n" + exampler_item['question']
-            options = [f"({k}) {v}" for k, v in exampler_item['options'].items()]
-            random.shuffle(options)
-            exampler_question_str += " " + " ".join(options)
-            exampler_answer_str = f"Answer: ({exampler_item['answer_idx']}) {exampler_item['answer']}"
-            
-            exampler_reason_str = reason_generation_agent.chat(f"Below is an example of medical knowledge question and answer. After reviewing the below medical question and answering, can you provide 1-2 sentences of reason that support the answer as if you didn't know the answer ahead?\n\nQuestion: {exampler_question_str}\n\nAnswer: {exampler_answer_str}")
-            
-            exampler_question_str += f"\n{exampler_answer_str}\n{exampler_reason_str}\n\n"
-            fewshot_examplers_str += exampler_question_str
-
     print()
     cprint("[INFO] Step 2. Collaborative Decision Making", 'yellow', attrs=['blink'])
     cprint("[INFO] Step 2.1. Hierarchy Selection", 'yellow', attrs=['blink'])
@@ -638,8 +600,11 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
 
     round_opinions_log = {r: {} for r in range(1, num_rounds+1)}
     initial_report_str = ""
+    summarizer_agents_list = []  # Track all summarizer agents for token usage
+    
     for agent_role_key, agent_instance in agent_dict.items():
-        opinion = agent_instance.chat(f'''Given the examplers, please return your answer to the medical query among the option provided.\n\n{fewshot_examplers_str}\n\nQuestion: {question}\n\nYour answer should be like below format.\n\nAnswer: ''', img_path=None)
+        # Direct reasoning without few-shot examples
+        opinion = agent_instance.chat(f'''Please return your answer to the medical query among the option provided.\n\nQuestion: {question}\n\nYour answer should be like below format.\n\nAnswer: ''', img_path=None)
         initial_report_str += f"({agent_role_key.lower()}): {opinion}\n"
         round_opinions_log[1][agent_role_key.lower()] = opinion
 
@@ -650,6 +615,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
         
         summarizer_agent = Agent(instruction="You are a medical assistant who excels at summarizing and synthesizing based on multiple experts from various domain experts.", role="medical assistant", model_info=model_to_use)
         summarizer_agent.chat("You are a medical assistant who excels at summarizing and synthesizing based on multiple experts from various domain experts.")
+        summarizer_agents_list.append(summarizer_agent)  # Track for token usage
         
         current_assessment_str = "".join(f"({k.lower()}): {v}\n" for k, v in round_opinions_log[r_idx].items())
 
@@ -768,10 +734,11 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
     sample_input_tokens += moderator_usage['input_tokens']
     sample_output_tokens += moderator_usage['output_tokens']
     
-    if 'reason_generation_agent' in locals():
-        reason_usage = reason_generation_agent.get_token_usage()
-        sample_input_tokens += reason_usage['input_tokens']
-        sample_output_tokens += reason_usage['output_tokens']
+    # Include all summarizer agents created during rounds
+    for summarizer_agent in summarizer_agents_list:
+        summarizer_usage = summarizer_agent.get_token_usage()
+        sample_input_tokens += summarizer_usage['input_tokens']
+        sample_output_tokens += summarizer_usage['output_tokens']
 
     return final_decision_output, sample_input_tokens, sample_output_tokens
 
@@ -803,7 +770,8 @@ def process_advanced_query(question, model_to_use, args):
             print(f" Member {i2+1} ({member_item['role']}): {member_item['expertise_description']}")
         print()
 
-        group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question, model_info=model_to_use)
+        # Create Group without examplers (no few-shot learning)
+        group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question, examplers=None, model_info=model_to_use)
         group_instances_list.append(group_instance_obj)
 
     cprint("[STEP 2] MDT Internal Interactions and Assessments", 'yellow', attrs=['blink'])
