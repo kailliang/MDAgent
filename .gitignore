@@ -47,6 +47,8 @@ data/
 pdf/
 imgs/
 .env
+claude-instructions.md
+CLAUDE.md
 
 # Large files
 *.jsonl
