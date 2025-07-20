@@ -488,21 +488,137 @@ Please indicate the difficulty/complexity of the medical query among below optio
         return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, examplers_data, model_to_use, args):
+    import re
+    import json
+    
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0
     
     # Create single agent without few-shot examples - direct reasoning
     single_agent = Agent(
-        instruction='You are a helpful assistant that answers multiple choice questions about medical knowledge.', 
+        instruction='You are a medical expert that answers multiple choice questions about medical knowledge.', 
         role='medical expert', 
         examplers=None,  # No few-shot examples
         model_info=model_to_use
     )
-    single_agent.chat('You are a helpful assistant that answers multiple choice questions about medical knowledge.')
+    single_agent.chat('You are a medical expert that answers multiple choice questions about medical knowledge.')
     
-    prompt = "The following are multiple choice questions (with answers) about medical knowledge. Let's think step by step.\n\n**Question:** {}\nAnswer: "
-    final_decision_dict = single_agent.temp_responses(prompt.format(question), img_path=None)
+    # Enhanced prompt for JSON output with strict formatting
+    prompt = """You are a medical expert. Analyze the following multiple choice question and provide your response in exactly this JSON format:
+
+{{
+  "reasoning": "Your step-by-step medical analysis in no more than 300 words",
+  "answer": "X"
+}}
+
+**Requirements:**
+- Keep reasoning under 300 words
+- Answer must be a single letter (A, B, C, D, E, etc.) corresponding to one of the options
+- Return ONLY the JSON, no other text
+
+**Question:** {}
+
+Response:"""
+    
+    max_retries = 2
+    temperatures = [0.0, 0.3, 0.7]  # Progressive temperature adjustment
+    final_decision_dict = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            current_temp = temperatures[min(attempt, len(temperatures)-1)]
+            cprint(f"Attempt {attempt + 1} with temperature {current_temp}", "cyan")
+            
+            # Create a new agent for each retry to reset temperature
+            if attempt > 0:
+                single_agent = Agent(
+                    instruction='You are a medical expert that answers multiple choice questions about medical knowledge.', 
+                    role='medical expert', 
+                    examplers=None,
+                    model_info=model_to_use
+                )
+                single_agent.chat('You are a medical expert that answers multiple choice questions about medical knowledge.')
+            
+            # Modify temp_responses to accept temperature parameter
+            if model_to_use in ['gpt-4o-mini', 'gpt-4.1-mini']:
+                # For OpenAI, we need to modify the API call with custom temperature
+                current_user_message_content = str(prompt.format(question))
+                api_call_messages = [msg.copy() for msg in single_agent.messages]
+                api_call_messages.append({"role": "user", "content": current_user_message_content})
+                
+                response = single_agent.client.chat.completions.create(
+                    model=single_agent.model_info,
+                    messages=api_call_messages,
+                    temperature=current_temp
+                )
+                
+                # Track token usage
+                if hasattr(response, 'usage'):
+                    single_agent.total_input_tokens += response.usage.prompt_tokens
+                    single_agent.total_output_tokens += response.usage.completion_tokens
+                
+                raw_response = response.choices[0].message.content
+                response_dict = {0.0: raw_response}
+                
+            elif model_to_use in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
+                # For Gemini, use the existing temp_responses method
+                response_dict = single_agent.temp_responses(prompt.format(question), img_path=None)
+                raw_response = response_dict.get(0.0, "")
+            else:
+                raise ValueError(f"Unsupported model: {model_to_use}")
+            
+            if not raw_response or "Error:" in raw_response:
+                cprint(f"Attempt {attempt + 1}: API call failed - {raw_response}", "yellow")
+                continue
+            
+            # Try to extract and validate JSON
+            try:
+                # Look for JSON pattern in the response
+                json_match = re.search(r'\{[^{}]*"reasoning"\s*:[^{}]*"answer"\s*:\s*"[^"]*"[^{}]*\}', raw_response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    parsed_json = json.loads(json_str)
+                    
+                    reasoning = parsed_json.get("reasoning", "").strip()
+                    answer = parsed_json.get("answer", "").strip().upper()
+                    
+                    # Validate reasoning length (300 words ≈ 1500-2000 characters)
+                    if len(reasoning) > 2000:
+                        cprint(f"Attempt {attempt + 1}: Reasoning too long ({len(reasoning)} chars)", "yellow")
+                        continue
+                    
+                    # Validate answer format (single letter)
+                    if len(answer) == 1 and answer.isalpha():
+                        final_decision_dict = {
+                            "reasoning": reasoning,
+                            "answer": answer
+                        }
+                        cprint(f"Attempt {attempt + 1}: Valid JSON response received - Answer: {answer}", "green")
+                        break
+                    else:
+                        cprint(f"Attempt {attempt + 1}: Invalid answer format '{answer}'", "yellow")
+                        continue
+                        
+                else:
+                    cprint(f"Attempt {attempt + 1}: No valid JSON found in response", "yellow")
+                    continue
+                    
+            except json.JSONDecodeError as e:
+                cprint(f"Attempt {attempt + 1}: JSON parsing failed - {str(e)}", "yellow")
+                continue
+            
+        except Exception as e:
+            cprint(f"Attempt {attempt + 1}: Exception occurred - {str(e)}", "red")
+            continue
+    
+    # If all attempts failed, create fallback response
+    if final_decision_dict is None:
+        cprint("All attempts failed, creating fallback response", "red")
+        final_decision_dict = {
+            "reasoning": "Unable to process question after multiple attempts",
+            "answer": "A"
+        }
     
     # Calculate token usage for this sample (only single agent)
     single_agent_usage = single_agent.get_token_usage()
