@@ -508,18 +508,16 @@ def process_basic_query(question, examplers_data, model_to_use, args):
     prompt = """You are a medical expert. Analyze the following multiple choice question and provide your response in exactly this JSON format:
 
 {{
-  "reasoning": "Your step-by-step medical analysis in no more than 300 words",
+  "reasoning": "Your step-by-step medical analysis in no more than 500 words",
   "answer": "X"
 }}
 
 **Requirements:**
-- Keep reasoning under 300 words
-- Answer must be a single letter (A, B, C, D, E, etc.) corresponding to one of the options
+- Answer must be a single letter (A, B, C, D, E, etc.) corresponding to one of the provided options
 - Return ONLY the JSON, no other text
 
 **Question:** {}
-
-Response:"""
+"""
     
     max_retries = 2
     temperatures = [0.0, 0.3, 0.7]  # Progressive temperature adjustment
@@ -582,11 +580,6 @@ Response:"""
                     
                     reasoning = parsed_json.get("reasoning", "").strip()
                     answer = parsed_json.get("answer", "").strip().upper()
-                    
-                    # Validate reasoning length (300 words ≈ 1500-2000 characters)
-                    if len(reasoning) > 2000:
-                        cprint(f"Attempt {attempt + 1}: Reasoning too long ({len(reasoning)} chars)", "yellow")
-                        continue
                     
                     # Validate answer format (single letter)
                     if len(answer) == 1 and answer.isalpha():
@@ -950,6 +943,3 @@ def process_advanced_query(question, model_to_use, args):
     sample_output_tokens += final_agent_usage['output_tokens']
     
     return {0.0: final_response_str}, sample_input_tokens, sample_output_tokens
-
-
-# round
