@@ -487,7 +487,7 @@ Please indicate the difficulty/complexity of the medical query among below optio
         cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
         return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
-def process_basic_query(question, examplers_data, model_to_use, args):
+def process_basic_query(question, model_to_use):
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0
@@ -511,7 +511,7 @@ def process_basic_query(question, examplers_data, model_to_use, args):
     
     return final_decision_dict, sample_input_tokens, sample_output_tokens
 
-def process_intermediate_query(question, examplers_data, model_to_use, args):
+def process_intermediate_query(question, model_to_use):
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0
@@ -522,8 +522,8 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
     recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info='gemini-2.5-flash-lite-preview-06-17')
     recruiter_agent.chat(recruit_prompt)
     
-    num_experts_to_recruit = 5
-    recruited_text = recruiter_agent.chat(f"Question: {question}\nYou can recruit {num_experts_to_recruit} experts in different medical expertise. Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?\nAlso, you need to specify the communication structure between experts (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.\n\nFor example, if you want to recruit five experts, you answer can be like:\n1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent\n2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist\n3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent\n4. Neonatologist - Focuses on the care of newborn infants, especially those who are born prematurely or have medical issues at birth. - Hierarchy: Independent\n5. Medical Geneticist - Specializes in the study of genes and heredity. - Hierarchy: Independent\n\nPlease answer in above format, and do not include your reason.")
+    num_experts_to_recruit = 3
+    recruited_text = recruiter_agent.chat(f"Question: {question}\nYou can recruit {num_experts_to_recruit} experts in different medical expertise. Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?\nAlso, you need to specify the communication structure between experts (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.\n\nFor example, if you want to recruit five experts, you answer can be like:\n1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent\n2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist\n3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent\n4. Neonatologist - Focuses on the care of newborn infants, especially those who are born prematurely or have medical issues at birth. - Hierarchy: Independent\n5. Medical Geneticist - Specializes in the study of genes and heredity. - Hierarchy: Independent\n\nPlease answer strictly in above format, and do not include your reason.")
 
     agents_info_raw = [agent_info.split(" - Hierarchy: ") for agent_info in recruited_text.split('\n') if agent_info.strip()]
     agents_data_parsed = [(info[0], info[1]) if len(info) > 1 else (info[0], None) for info in agents_info_raw]
@@ -576,7 +576,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
         except Exception as e:
             cprint(f"Error printing agent info: {agent_tuple} - {e}", "red")
 
-    print()
+    # print()
     cprint("[INFO] Step 2. Collaborative Decision Making", 'yellow', attrs=['blink'])
     cprint("[INFO] Step 2.1. Hierarchy Selection", 'yellow', attrs=['blink'])
     if hierarchy_agents_nodes:
@@ -590,8 +590,8 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
 
     print()
 
-    num_rounds = 5
-    num_turns = 5
+    num_rounds = 3 # 这里改成 3
+    num_turns = 3 # 这里改成 3
     num_active_agents = len(medical_agents_list)
 
     interaction_log = {f'Round {r}': {f'Turn {t}': {f'Agent {s}': {f'Agent {trg}': None for trg in range(1, num_active_agents + 1)} for s in range(1, num_active_agents + 1)} for t in range(1, num_turns + 1)} for r in range(1, num_rounds + 1)}
@@ -604,7 +604,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
     
     for agent_role_key, agent_instance in agent_dict.items():
         # Direct reasoning without few-shot examples
-        opinion = agent_instance.chat(f'''Please return your answer to the medical query among the option provided.\n\nQuestion: {question}\n\nYour answer should be like below format.\n\nAnswer: ''', img_path=None)
+        opinion = agent_instance.chat(f'''Please return your answer within 50 words to the medical query among the option provided.\n\nQuestion: {question}\n\nYour answer should be like below format.\n\nAnswer: ''', img_path=None)
         initial_report_str += f"({agent_role_key.lower()}): {opinion}\n"
         round_opinions_log[1][agent_role_key.lower()] = opinion
 
@@ -628,17 +628,33 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
             for agent_idx, agent_instance_loop in enumerate(medical_agents_list):
                 context_for_participation_decision = current_assessment_str
 
-                participate_decision = agent_instance_loop.chat(f"Given the opinions from other medical experts in your team (see below), please indicate whether you want to talk to any expert (yes/no).\n\nOpinions:\n{context_for_participation_decision}")
+                participate_decision_response = agent_instance_loop.chat(f"Given the opinions from other medical experts in your team (see below), please indicate whether you want to talk to any expert. Return your response in JSON format with the key 'participate' (true/false) and 'reason' (brief explanation).\n\nOpinions:\n{context_for_participation_decision}\n\nExample response:\n{{\n  \"participate\": true,\n  \"reason\": \"I disagree with the cardiologist's assessment\"\n}}")
                 
-                if 'yes' in participate_decision.lower().strip():                
-                    chosen_expert_indices_str = agent_instance_loop.chat(f"Enter the number of the expert you want to talk to (1-{num_active_agents}):\n{agent_list_str}\nFor example, if you want to talk with Agent 1. Pediatrician, return just 1. If you want to talk with more than one expert, please return 1,2 (comma-separated) and don't return the reasons.")
+                # Parse JSON response for participation decision
+                try:
+                    participate_json = json.loads(participate_decision_response)
+                    should_participate = participate_json.get('participate', False)
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    # Fallback to text parsing if JSON parsing fails
+                    should_participate = 'yes' in participate_decision_response.lower().strip() or 'true' in participate_decision_response.lower().strip()
+                
+                if should_participate:                
+                    chosen_expert_response = agent_instance_loop.chat(f"Select which expert(s) you want to talk to (1-{num_active_agents}). Return your response in JSON format with the key 'selected_experts' as an array of numbers.\n\n{agent_list_str}\n\nExample response:\n{{\n  \"selected_experts\": [1, 3]\n}}")
                     
-                    chosen_expert_indices = [int(ce.strip()) for ce in chosen_expert_indices_str.replace('.', ',').split(',') if ce.strip().isdigit()]
+                    # Parse JSON response for expert selection
+                    try:
+                        expert_json = json.loads(chosen_expert_response)
+                        chosen_expert_indices = expert_json.get('selected_experts', [])
+                        # Ensure all indices are integers
+                        chosen_expert_indices = [int(idx) for idx in chosen_expert_indices if str(idx).isdigit()]
+                    except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
+                        # Fallback to original parsing if JSON parsing fails
+                        chosen_expert_indices = [int(ce.strip()) for ce in chosen_expert_response.replace('.', ',').split(',') if ce.strip().isdigit()]
 
                     for target_expert_idx_chosen in chosen_expert_indices:
                         if 1 <= target_expert_idx_chosen <= num_active_agents:
                             target_agent_actual_idx = target_expert_idx_chosen - 1
-                            specific_question_to_expert = agent_instance_loop.chat(f"Please remind your medical expertise and then leave your opinion/question for an expert you chose (Agent {target_expert_idx_chosen}. {medical_agents_list[target_agent_actual_idx].role}). You should deliver your opinion once you are confident enough and in a way to convince other expert, with a short reason.")
+                            specific_question_to_expert = agent_instance_loop.chat(f"Please remind your medical expertise and then leave your opinion/question for an expert you chose (Agent {target_expert_idx_chosen}. {medical_agents_list[target_agent_actual_idx].role}). You should deliver your opinion once you are confident enough and in a way to convince other expert. Limit your response with no more than 200 words.") 
                             
                             source_emoji = agent_emoji[agent_idx % len(agent_emoji)]
                             target_emoji = agent_emoji[target_agent_actual_idx % len(agent_emoji)]
@@ -663,14 +679,14 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
         if r_idx < num_rounds:
             next_round_opinions = {}
             for agent_idx_collect, agent_instance_collect in enumerate(medical_agents_list):
-                opinion_prompt = f"Reflecting on the discussions in Round {r_idx}, what is your current answer/opinion on the question: {question}\nAnswer: "
+                opinion_prompt = f"Reflecting on the discussions in Round {r_idx}, what is your current answer/opinion on the question: {question}\n Limit your answer within 50 words" 
                 response = agent_instance_collect.chat(opinion_prompt)
                 next_round_opinions[agent_instance_collect.role.lower()] = response
             round_opinions_log[r_idx+1] = next_round_opinions
         
         current_round_final_answers = {}
         for agent_instance_final in medical_agents_list:
-            response = agent_instance_final.chat(f"Now that you've interacted with other medical experts this round, remind your expertise and the comments from other experts and make your final answer to the given question for this round:\n{question}\nAnswer: ")
+            response = agent_instance_final.chat(f"Now that you've interacted with other medical experts this round, remind your expertise and the comments from other experts and make your final answer to the given question for this round:\n{question}\n limit your answer within 50 words.")
             current_round_final_answers[agent_instance_final.role] = response
         final_answer_map = current_round_final_answers
 
@@ -712,7 +728,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
         cprint("Warning: No final answers recorded from agents. Using initial opinions for moderation.", "yellow")
         final_answer_map = round_opinions_log[1]
 
-    moderator_decision_dict = moderator.temp_responses(f"Given each agent's final answer, please review each agent's opinion and make the final answer to the question by taking majority vote or synthesizing the best response. Your answer should be in the format like: Answer: C) Example Answer\n\nAgent Opinions:\n{final_answer_map}\n\nQuestion: {question}", img_path=None)
+    moderator_decision_dict = moderator.temp_responses(f"Given each agent's final answer, please review each agent's opinion and make the final answer to the question by taking majority vote or synthesizing the best response. \nAgent Opinions:\n{final_answer_map}\n\nQuestion: {question} \nOnly respond with the correct option and answer, in this format: Answer: C) Example Answer. Do not include any explanations.", img_path=None)
     
     majority_vote_response = moderator_decision_dict.get(0.0, "Error: Moderator failed to provide a decision.")
     final_decision_output = {'majority_vote': majority_vote_response}
@@ -742,7 +758,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
 
     return final_decision_output, sample_input_tokens, sample_output_tokens
 
-def process_advanced_query(question, model_to_use, args):
+def process_advanced_query(question, model_to_use):
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0

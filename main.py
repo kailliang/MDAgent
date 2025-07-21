@@ -6,6 +6,11 @@ from tqdm import tqdm
 from termcolor import cprint
 
 # Assuming your utils.py is in the same directory or accessible via PYTHONPATH
+# Difficulty skip switches - set to True to skip processing that difficulty level
+SKIP_BASIC = True          # Skip basic difficulty questions
+SKIP_INTERMEDIATE = False  # Process intermediate difficulty questions  
+SKIP_ADVANCED = True       # Skip advanced difficulty questions
+
 from utils import (
     # Agent, Group, parse_hierarchy, parse_group_info, # Not directly used in main
     setup_model,
@@ -75,20 +80,31 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
     difficulty_level, difficulty_input_tokens, difficulty_output_tokens = determine_difficulty(question, args.difficulty)
     cprint(f"Determined difficulty: {difficulty_level}", "yellow")
 
+    # Check if we should skip this difficulty level
+    if (difficulty_level == 'basic' and SKIP_BASIC):
+        cprint(f"Skipping basic difficulty sample {no+1} (SKIP_BASIC=True)", "cyan")
+        continue
+    elif (difficulty_level == 'intermediate' and SKIP_INTERMEDIATE):
+        cprint(f"Skipping intermediate difficulty sample {no+1} (SKIP_INTERMEDIATE=True)", "cyan")
+        continue  
+    elif (difficulty_level == 'advanced' and SKIP_ADVANCED):
+        cprint(f"Skipping advanced difficulty sample {no+1} (SKIP_ADVANCED=True)", "cyan")
+        continue
+
     final_decision = None
     sample_input_tokens = difficulty_input_tokens
     sample_output_tokens = difficulty_output_tokens
     
     if difficulty_level == 'basic':
-        final_decision, process_input_tokens, process_output_tokens = process_basic_query(question, examplers, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_basic_query(question, args.model)
         sample_input_tokens += process_input_tokens
         sample_output_tokens += process_output_tokens
     elif difficulty_level == 'intermediate':
-        final_decision, process_input_tokens, process_output_tokens = process_intermediate_query(question, examplers, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_intermediate_query(question, args.model)
         sample_input_tokens += process_input_tokens
         sample_output_tokens += process_output_tokens
     elif difficulty_level == 'advanced':
-        final_decision, process_input_tokens, process_output_tokens = process_advanced_query(question, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_advanced_query(question, args.model)
         sample_input_tokens += process_input_tokens
         sample_output_tokens += process_output_tokens
     else:
