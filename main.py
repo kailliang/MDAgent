@@ -72,7 +72,7 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
     # total_api_calls = 0 # Initialized but not used. Can be removed or implemented if needed.
 
     question, img_path = create_question(sample, args.dataset)
-    cprint(f"Question: {question[:100]}...", "white") # Print a snippet of the question
+    cprint(f"Question: {question[:30]}...", "white") # Print a snippet of the question
 
     # Determine difficulty using the utility function
     # The 'args.difficulty' string is passed, and 'determine_difficulty' handles 'adaptive' logic.
@@ -136,7 +136,7 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
     
     # Print per-sample token usage
     cprint(f"Sample {no+1} Token Usage - Input: {sample_input_tokens}, Output: {sample_output_tokens}, Total: {sample_input_tokens + sample_output_tokens}", "cyan")
-    cprint(f"Final decision for sample {no+1}: {str(final_decision)[:100]}...", "green")
+    # cprint(f"Final decision for sample {no+1}: {str(final_decision)[:100]}...", "green")
 
     if args.dataset == 'medqa':
         results.append({

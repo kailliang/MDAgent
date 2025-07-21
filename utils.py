@@ -488,28 +488,223 @@ Please indicate the difficulty/complexity of the medical query among below optio
         return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, model_to_use):
+    import re
+    import json
+    
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0
     
-    # Create single agent without few-shot examples - direct reasoning
-    single_agent = Agent(
-        instruction='You are a helpful assistant that answers multiple choice questions about medical knowledge.', 
-        role='medical expert', 
-        examplers=None,  # No few-shot examples
+    # Step 1: Expert Recruitment - recruit 3 experts with equal weight
+    cprint("[INFO] Step 1. Expert Recruitment", 'yellow', attrs=['blink'])
+    recruit_prompt = "You are an experienced medical expert who recruits medical specialists to solve the given medical query."
+    
+    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info='gemini-2.5-flash-lite-preview-06-17')
+    recruiter_agent.chat(recruit_prompt)
+    
+    num_experts_to_recruit = 3
+    recruited_text = recruiter_agent.chat(f"""Question: {question}
+
+You need to recruit {num_experts_to_recruit} medical experts with different specialties but equal authority/weight to analyze this question. 
+
+Please return your recruitment plan in JSON format:
+
+{{
+  "experts": [
+    {{
+      "id": 1,
+      "role": "Cardiologist",
+      "expertise_description": "Specializes in heart and cardiovascular system disorders",
+      "hierarchy": "Independent"
+    }},
+    {{
+      "id": 2,
+      "role": "Pulmonologist", 
+      "expertise_description": "Specializes in respiratory system diseases",
+      "hierarchy": "Independent"
+    }},
+    {{
+      "id": 3,
+      "role": "Emergency Medicine Physician",
+      "expertise_description": "Specializes in acute care and emergency medical situations", 
+      "hierarchy": "Independent"
+    }}
+  ]
+}}
+
+All experts should be marked as "Independent" with equal authority. Return ONLY the JSON, no other text.""")
+
+    # Parse JSON response for expert recruitment
+    try:
+        # Clean JSON response by removing markdown blocks
+        cleaned_response = recruited_text.strip()
+        if cleaned_response.startswith('```json'):
+            cleaned_response = cleaned_response[7:]
+        if cleaned_response.startswith('```'):
+            cleaned_response = cleaned_response[3:]
+        if cleaned_response.endswith('```'):
+            cleaned_response = cleaned_response[:-3]
+        
+        experts_data = json.loads(cleaned_response)
+        recruited_experts = experts_data.get('experts', [])
+        
+        if len(recruited_experts) != num_experts_to_recruit:
+            raise ValueError(f"Expected {num_experts_to_recruit} experts, got {len(recruited_experts)}")
+            
+    except (json.JSONDecodeError, ValueError) as e:
+        cprint(f"Warning: Failed to parse JSON recruitment response: {e}. Using default experts.", "yellow")
+        recruited_experts = [
+            {"id": 1, "role": "General Internal Medicine Physician", "expertise_description": "Specializes in comprehensive adult medical care", "hierarchy": "Independent"},
+            {"id": 2, "role": "Emergency Medicine Physician", "expertise_description": "Specializes in acute care and emergency situations", "hierarchy": "Independent"},  
+            {"id": 3, "role": "Family Medicine Physician", "expertise_description": "Specializes in primary care across all age groups", "hierarchy": "Independent"}
+        ]
+    
+    # Display recruited experts
+    # print("Recruited Experts:")
+    # for expert in recruited_experts:
+    #     print(f"Expert {expert['id']}: {expert['role']} - {expert['expertise_description']}")
+    # print()
+    
+    # Step 2: Create agent instances and get individual responses
+    cprint("[INFO] Step 2. Independent Expert Analysis", 'yellow', attrs=['blink'])
+    expert_agents = []
+    expert_responses = []
+    
+    for expert in recruited_experts:
+        # Create agent for each expert
+        agent = Agent(
+            instruction=f"You are a {expert['role']} who {expert['expertise_description'].lower()}. Your job is to analyze medical questions independently.",
+            role=expert['role'], 
+            examplers=None,
+            model_info=model_to_use
+        )
+        agent.chat(f"You are a {expert['role']} who {expert['expertise_description'].lower()}.")
+        expert_agents.append(agent)
+        
+        # Get response from each expert with structured JSON format
+        expert_prompt = f"""You are a {expert['role']}. Analyze the following multiple choice question and provide your response in exactly this JSON format:
+
+{{
+  "reasoning": "Your step-by-step medical analysis in no more than 300 words",
+  "answer": "X) Example Answer "
+}}
+
+**Requirements:**
+- Answer must correspond to one of the provided options
+- Return ONLY the JSON, no other text
+
+**Question:** {question}
+"""
+        
+        response_dict = agent.temp_responses(expert_prompt, img_path=None)
+        raw_response = response_dict.get(0.0, "")
+        
+        # Parse expert response
+        try:
+            json_match = re.search(r'\{[^{}]*"reasoning"\s*:[^{}]*"answer"\s*:\s*"[^"]*"[^{}]*\}', raw_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                parsed_json = json.loads(json_str)
+                expert_response = {
+                    "expert_id": expert['id'],
+                    "role": expert['role'],
+                    "reasoning": parsed_json.get("reasoning", "").strip(),
+                    "answer": parsed_json.get("answer", "").strip()
+                }
+            else:
+                expert_response = {
+                    "expert_id": expert['id'],
+                    "role": expert['role'], 
+                    "reasoning": "Unable to parse expert response",
+                    "answer": "X) Parse error"
+                }
+        except json.JSONDecodeError:
+            expert_response = {
+                "expert_id": expert['id'],
+                "role": expert['role'],
+                "reasoning": "JSON parsing error",
+                "answer": "X) JSON error"
+            }
+        
+        expert_responses.append(expert_response)
+    
+    print()
+    
+    # Step 3: Arbitrator analysis and final decision
+    cprint("[INFO] Step 3. Arbitrator Final Decision", 'yellow', attrs=['blink'])
+    
+    arbitrator = Agent(
+        instruction="You are a medical arbitrator who reviews multiple expert opinions and synthesizes the best final decision.",
+        role="Medical Arbitrator",
         model_info=model_to_use
     )
-    single_agent.chat('You are a helpful assistant that answers multiple choice questions about medical knowledge.')
+    arbitrator.chat("You are a medical arbitrator who reviews multiple expert opinions and synthesizes the best final decision.")
     
-    prompt = "The following are multiple choice questions (with answers) about medical knowledge. Let's think step by step.\n\n**Question:** {}"
-    final_decision_dict = single_agent.temp_responses(prompt.format(question), img_path=None)
+    # Format expert responses for arbitrator
+    experts_summary = ""
+    for response in expert_responses:
+        experts_summary += f"Expert {response['expert_id']} ({response['role']}):\n"
+        experts_summary += f"Reasoning: {response['reasoning']}\n"
+        experts_summary += f"Answer: {response['answer']}\n\n"
     
-    # Calculate token usage for this sample (only single agent)
-    single_agent_usage = single_agent.get_token_usage()
-    sample_input_tokens = single_agent_usage['input_tokens']
-    sample_output_tokens = single_agent_usage['output_tokens']
+    arbitrator_prompt = f"""You are a medical arbitrator. Review the following expert opinions and provide your final decision in JSON format:
+
+{experts_summary}
+
+Question: {question}
+
+Analyze all expert opinions and provide your final decision in exactly this JSON format:
+
+{{
+  "analysis": "Your analysis of the expert opinions and rationale for final decision in no more than 300 words",
+  "final_answer": "X) Example Answer"
+}}
+
+**Requirements:**
+- Consider all expert opinions in your analysis
+- Final answer must correspond to one of the provided options
+- Return ONLY the JSON, no other text
+"""
+    
+    final_response_dict = arbitrator.temp_responses(arbitrator_prompt, img_path=None)
+    raw_final_response = final_response_dict.get(0.0, "")
+    
+    # Parse arbitrator response
+    try:
+        json_match = re.search(r'\{[^{}]*"analysis"\s*:[^{}]*"final_answer"\s*:\s*"[^"]*"[^{}]*\}', raw_final_response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            final_decision_dict = json.loads(json_str)
+        else:
+            final_decision_dict = {
+                "analysis": "Unable to parse arbitrator response",
+                "final_answer": "X) Parse error"
+            }
+    except json.JSONDecodeError:
+        final_decision_dict = {
+            "analysis": "JSON parsing error in arbitrator response", 
+            "final_answer": "X) JSON error"
+        }
+    
+    print(f"Arbitrator Final Decision: {final_decision_dict.get('final_answer', 'Error')}")
+    print()
+    
+    # Calculate token usage for this sample
+    recruiter_usage = recruiter_agent.get_token_usage()
+    sample_input_tokens += recruiter_usage['input_tokens']
+    sample_output_tokens += recruiter_usage['output_tokens']
+    
+    for agent in expert_agents:
+        agent_usage = agent.get_token_usage()
+        sample_input_tokens += agent_usage['input_tokens']
+        sample_output_tokens += agent_usage['output_tokens']
+    
+    arbitrator_usage = arbitrator.get_token_usage()
+    sample_input_tokens += arbitrator_usage['input_tokens']
+    sample_output_tokens += arbitrator_usage['output_tokens']
     
     return final_decision_dict, sample_input_tokens, sample_output_tokens
+
 
 def process_intermediate_query(question, model_to_use):
     # Reset token usage for this sample
