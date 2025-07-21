@@ -501,7 +501,7 @@ def process_basic_query(question, examplers_data, model_to_use, args):
     )
     single_agent.chat('You are a helpful assistant that answers multiple choice questions about medical knowledge.')
     
-    prompt = "The following are multiple choice questions (with answers) about medical knowledge. Let's think step by step.\n\n**Question:** {}\nAnswer: "
+    prompt = "The following are multiple choice questions (with answers) about medical knowledge. Let's think step by step.\n\n**Question:** {}"
     final_decision_dict = single_agent.temp_responses(prompt.format(question), img_path=None)
     
     # Calculate token usage for this sample (only single agent)
