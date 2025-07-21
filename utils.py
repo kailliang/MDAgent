@@ -291,7 +291,7 @@ class Group:
             else:
                 delivery_prompt += "\nYou are working independently or with a predefined protocol to address the goal."
 
-            delivery_prompt += "\n\nNow, given the medical query, provide a short answer to what kind investigations are needed from each assistant clinicians (if any), or outline your approach.\nQuestion: {}".format(self.question)
+            delivery_prompt += "\n\nNow, given the medical query, provide a short answer to what kind investigations are needed from each assistant clinicians (if any), or outline your approach. Strictly limit your response with no more than 30 words. \n Question: {}".format(self.question)
             
             try:
                 delivery = lead_member.chat(delivery_prompt)
@@ -309,7 +309,7 @@ class Group:
             investigations = []
             if assist_members:
                 for a_mem in assist_members:
-                    investigation = a_mem.chat("You are in a medical group where the goal is to {}. Your group lead is asking for the following investigations:\n{}\n\nPlease remind your expertise and return your investigation summary that contains the core information.".format(self.goal, delivery))
+                    investigation = a_mem.chat("You are in a medical group where the goal is to {}. Your group lead is asking for the following investigations:\n{}\n\nPlease remind your expertise and return your investigation summary that contains the core information. Strictly limit your response with no more than 50 words.".format(self.goal, delivery))
                     investigations.append([a_mem.role, investigation])
             
             gathered_investigation = ""
@@ -320,7 +320,7 @@ class Group:
                 gathered_investigation = delivery
 
             # Direct reasoning without few-shot examples
-            investigation_prompt = f"""The gathered investigation from your assistant clinicians (or your own initial assessment if working alone) is as follows:\n{gathered_investigation}.\n\nNow, return your answer to the medical query among the option provided.\n\nQuestion: {self.question}"""
+            investigation_prompt = f"""The gathered investigation from your assistant clinicians (or your own initial assessment if working alone) is as follows:\n{gathered_investigation}.\n\nNow, return your answer to the medical query among the option provided. Limit your response with no more than 100 words.\n\nQuestion: {self.question}"""
 
             response = lead_member.chat(investigation_prompt)
             return response
@@ -771,24 +771,76 @@ def process_advanced_query(question, model_to_use):
     recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent_mdt.chat(recruit_prompt)
 
-    num_teams_to_form = 3
-    num_agents_per_team = 3
+    num_teams_to_form = 2
+    num_agents_per_team = 2
 
-    recruited_mdt_text = recruiter_agent_mdt.chat(f"Question: {question}\n\nYou should organize {num_teams_to_form} MDTs with different specialties or purposes and each MDT should have {num_agents_per_team} clinicians. Considering the medical question and the options, please return your recruitment plan to better make an accurate answer.\n\nFor example, the following can an example answer:\nGroup 1 - Initial Assessment Team (IAT)\nMember 1: Otolaryngologist (ENT Surgeon) (Lead) - Specializes in ear, nose, and throat surgery, including thyroidectomy. This member leads the group due to their critical role in the surgical intervention and managing any surgical complications, such as nerve damage.\nMember 2: General Surgeon - Provides additional surgical expertise and supports in the overall management of thyroid surgery complications.\nMember 3: Anesthesiologist - Focuses on perioperative care, pain management, and assessing any complications from anesthesia that may impact voice and airway function.\n\nGroup 2 - Diagnostic Evidence Team (DET)\nMember 1: Endocrinologist (Lead) - Oversees the long-term management of Graves' disease, including hormonal therapy and monitoring for any related complications post-surgery.\nMember 2: Speech-Language Pathologist - Specializes in voice and swallowing disorders, providing rehabilitation services to improve the patient's speech and voice quality following nerve damage.\nMember 3: Neurologist - Assesses and advises on nerve damage and potential recovery strategies, contributing neurological expertise to the patient's care.\n\nGroup 3 - Final Review and Decision Team (FRDT)\nMember 1: Senior Consultant from each specialty (Lead) - Provides overarching expertise and guidance in decision\nMember 2: Clinical Decision Specialist - Coordinates the different recommendations from the various teams and formulates a comprehensive treatment plan.\nMember 3: Advanced Diagnostic Support - Utilizes advanced diagnostic tools and techniques to confirm the exact extent and cause of nerve damage, aiding in the final decision.\n\nAbove is just an example, thus, you should organize your own unique MDTs but you should include Initial Assessment Team (IAT) and Final Review and Decision Team (FRDT) in your recruitment plan. When you return your answer, please strictly refer to the above format.")
+    recruited_mdt_response = recruiter_agent_mdt.chat(f"Question: {question}\n\nYou should organize {num_teams_to_form} MDTs with different specialties or purposes and each MDT should have {num_agents_per_team} clinicians. Return your recruitment plan in JSON format with the following structure:\n\n{{\n  \"teams\": [\n    {{\n      \"team_id\": 1,\n      \"team_name\": \"Initial Assessment Team (IAT)\",\n      \"members\": [\n        {{\n          \"member_id\": 1,\n          \"role\": \"Otolaryngologist (ENT Surgeon) (Lead)\",\n          \"expertise_description\": \"Specializes in ear, nose, and throat surgery, including thyroidectomy. This member leads the group due to their critical role in the surgical intervention and managing any surgical complications, such as nerve damage.\"\n        }},\n        {{\n          \"member_id\": 2,\n          \"role\": \"General Surgeon\",\n          \"expertise_description\": \"Provides additional surgical expertise and supports in the overall management of thyroid surgery complications.\"\n        }},\n        {{\n          \"member_id\": 3,\n          \"role\": \"Anesthesiologist\",\n          \"expertise_description\": \"Focuses on perioperative care, pain management, and assessing any complications from anesthesia that may impact voice and airway function.\"\n        }}\n      ]\n    }}\n  ]\n}}\n\nYou must include Initial Assessment Team (IAT) and Final Review and Decision Team (FRDT) in your recruitment plan. Each team should have exactly {num_agents_per_team} members with one designated as Lead. Return only valid JSON without markdown code blocks or explanations.")
 
-    groups_text_list = [group_text.strip() for group_text in recruited_mdt_text.split("Group") if group_text.strip()]
-    group_strings_list = ["Group " + group_text for group_text in groups_text_list]
-    
-    for i1, group_str_item in enumerate(group_strings_list):
-        parsed_group_struct = parse_group_info(group_str_item)
-        print(f"Group {i1+1} - {parsed_group_struct['group_goal']}")
-        for i2, member_item in enumerate(parsed_group_struct['members']):
-            print(f" Member {i2+1} ({member_item['role']}): {member_item['expertise_description']}")
-        print()
+    # Clean and parse JSON response for MDT recruitment
+    def clean_json_response(response_text):
+        """Clean JSON response by removing markdown code blocks and extra formatting"""
+        # Remove markdown code blocks
+        response_text = response_text.strip()
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]  # Remove ```json
+        if response_text.startswith('```'):
+            response_text = response_text[3:]   # Remove ```
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]  # Remove trailing ```
+        
+        # Find JSON content between braces
+        start_idx = response_text.find('{')
+        end_idx = response_text.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+            response_text = response_text[start_idx:end_idx+1]
+        
+        return response_text.strip()
 
-        # Create Group without examplers (no few-shot learning)
-        group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question, examplers=None, model_info=model_to_use)
-        group_instances_list.append(group_instance_obj)
+    try:
+        cleaned_response = clean_json_response(recruited_mdt_response)
+        mdt_data = json.loads(cleaned_response)
+        teams = mdt_data.get('teams', [])
+        
+        for team_data in teams:
+            team_name = team_data.get('team_name', f"Team {team_data.get('team_id', 'Unknown')}")
+            members = team_data.get('members', [])
+            
+            print(f"Group {team_data.get('team_id', len(group_instances_list)+1)} - {team_name}")
+            
+            # Convert JSON member format to the expected format
+            parsed_members = []
+            for member in members:
+                role = member.get('role', 'Unknown Role')
+                expertise = member.get('expertise_description', 'No description available')
+                parsed_members.append({
+                    'role': role,
+                    'expertise_description': expertise
+                })
+                print(f" Member {member.get('member_id', len(parsed_members))} ({role}): {expertise}")
+            print()
+            
+            # Create Group instance
+            group_instance_obj = Group(team_name, parsed_members, question, examplers=None, model_info=model_to_use)
+            group_instances_list.append(group_instance_obj)
+            
+    except (json.JSONDecodeError, TypeError, KeyError) as e:
+        cprint(f"Warning: Failed to parse JSON MDT response: {e}. Falling back to text parsing.", "yellow")
+        
+        # Fallback to original text parsing method
+        groups_text_list = [group_text.strip() for group_text in recruited_mdt_response.split("Group") if group_text.strip()]
+        group_strings_list = ["Group " + group_text for group_text in groups_text_list]
+        
+        for i1, group_str_item in enumerate(group_strings_list):
+            parsed_group_struct = parse_group_info(group_str_item)
+            print(f"Group {i1+1} - {parsed_group_struct['group_goal']}")
+            for i2, member_item in enumerate(parsed_group_struct['members']):
+                print(f" Member {i2+1} ({member_item['role']}): {member_item['expertise_description']}")
+            print()
+
+            # Create Group without examplers (no few-shot learning)
+            group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question, examplers=None, model_info=model_to_use)
+            group_instances_list.append(group_instance_obj)
 
     cprint("[STEP 2] MDT Internal Interactions and Assessments", 'yellow', attrs=['blink'])
     initial_assessments_list = []
@@ -828,7 +880,7 @@ def process_advanced_query(question, model_to_use):
     final_decision_agent = Agent(instruction=final_decision_prompt, role='Overall Coordinator', model_info=model_to_use)
     final_decision_agent.chat(final_decision_prompt)
 
-    final_decision_dict_adv = final_decision_agent.temp_responses(f"""Combined MDT Investigations and Conclusions:\n{compiled_report_str}\n\nBased on all the above, what is the final answer to the original medical query?\nQuestion: {question}\nYour answer should be in the format: Answer: A) Example Answer""", img_path=None)
+    final_decision_dict_adv = final_decision_agent.temp_responses(f"""Combined MDT Investigations and Conclusions:\n{compiled_report_str}\n\nBased on all the above, what is the final answer to the original medical query?\nQuestion: {question}\nYour answer should strictly be in the following format: \nAnswer: A) Example Answer \n DO NOT include any explanation.""", img_path=None)
     
     final_response_str = final_decision_dict_adv.get(0.0, "Error: Final coordinator failed to provide a decision.")
     cprint(f"Overall Coordinated Final Decision: {final_response_str}", "green")
@@ -851,5 +903,3 @@ def process_advanced_query(question, model_to_use):
     
     return {0.0: final_response_str}, sample_input_tokens, sample_output_tokens
 
-
-# round

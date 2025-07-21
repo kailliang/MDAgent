@@ -7,9 +7,9 @@ from termcolor import cprint
 
 # Assuming your utils.py is in the same directory or accessible via PYTHONPATH
 # Difficulty skip switches - set to True to skip processing that difficulty level
-SKIP_BASIC = True          # Skip basic difficulty questions
+SKIP_BASIC = False          # Skip basic difficulty questions
 SKIP_INTERMEDIATE = False  # Process intermediate difficulty questions  
-SKIP_ADVANCED = True       # Skip advanced difficulty questions
+SKIP_ADVANCED = False       # Skip advanced difficulty questions
 
 from utils import (
     # Agent, Group, parse_hierarchy, parse_group_info, # Not directly used in main

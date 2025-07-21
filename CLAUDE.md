@@ -257,3 +257,213 @@ for summarizer_agent in summarizer_agents_list:
 - **Flexibility**: Adapts team composition to question complexity
 
 This implementation represents a sophisticated approach to multi-agent medical decision-making, balancing collaborative discussion with computational efficiency.
+
+## Detailed Analysis: process_advanced_query Function
+
+The `process_advanced_query` function (`utils.py:761-852`) implements the most complex medical decision-making system using Multidisciplinary Teams (MDTs). This function represents the pinnacle of collaborative medical expertise for the most challenging cases.
+
+### Function Signature and Purpose
+```python
+def process_advanced_query(question, model_to_use):
+    # Returns: ({0.0: final_response_str}, sample_input_tokens, sample_output_tokens)
+```
+
+### Three-Step MDT Architecture
+
+#### Step 1: Multidisciplinary Team Recruitment (`utils.py:766-791`)
+**Purpose**: Organize specialized medical teams with distinct roles and expertise areas
+
+**Key Components**:
+
+1. **MDT Recruiter Creation** (`utils.py:771-772`):
+   ```python
+   recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
+   recruiter_agent_mdt.chat(recruit_prompt)
+   ```
+   - Uses user-specified model for recruitment decisions
+   - Specialized in multidisciplinary team formation and medical workflow design
+
+2. **Team Structure Requirements** (`utils.py:774-775`):
+   ```python
+   num_teams_to_form = 3        # Fixed number of teams
+   num_agents_per_team = 3      # Fixed team size
+   ```
+   - **Team 1**: Initial Assessment Team (IAT) - Primary evaluation and triage
+   - **Team 2**: Specialist Team - Domain-specific expertise  
+   - **Team 3**: Final Review and Decision Team (FRDT) - Integration and final judgment
+
+3. **Structured Team Recruitment** (`utils.py:777`):
+   - Provides detailed example format with specific roles and hierarchies
+   - Requires each team to have a designated Lead member
+   - Mandates inclusion of IAT and FRDT teams
+   - Uses structured prompt engineering for consistent team formation
+
+4. **Team Parsing and Instantiation** (`utils.py:779-791`):
+   ```python
+   groups_text_list = [group_text.strip() for group_text in recruited_mdt_text.split("Group") if group_text.strip()]
+   group_strings_list = ["Group " + group_text for group_text in groups_text_list]
+   
+   for i1, group_str_item in enumerate(group_strings_list):
+       parsed_group_struct = parse_group_info(group_str_item)
+       group_instance_obj = Group(parsed_group_struct['group_goal'], 
+                                 parsed_group_struct['members'], 
+                                 question, examplers=None, model_info=model_to_use)
+   ```
+   - Uses `parse_group_info()` to extract team goals and member specifications
+   - Creates Group instances for each MDT with specialized objectives
+   - No few-shot learning used (direct reasoning approach)
+
+#### Step 2: MDT Internal Interactions and Assessments (`utils.py:793-823`)
+**Purpose**: Execute parallel team assessments with role-specific processing
+
+**Team Classification Logic** (`utils.py:798-811`):
+```python
+for group_obj in group_instances_list:
+    group_goal_lower = group_obj.goal.lower()
+    if 'initial' in group_goal_lower or 'iat' in group_goal_lower:
+        # Process Initial Assessment Team
+        init_assessment_text = group_obj.interact(comm_type='internal')
+        initial_assessments_list.append([group_obj.goal, init_assessment_text])
+    elif 'review' in group_goal_lower or 'decision' in group_goal_lower or 'frdt' in group_goal_lower:
+        # Process Final Review/Decision Team  
+        decision_text = group_obj.interact(comm_type='internal')
+        final_review_decisions_list.append([group_obj.goal, decision_text])
+    else:
+        # Process Specialist Team
+        assessment_text = group_obj.interact(comm_type='internal')
+        other_mdt_assessments_list.append([group_obj.goal, assessment_text])
+```
+
+**Internal Group Interaction Mechanism** (Group.interact(), `utils.py:269-326`):
+
+1. **Leadership Identification** (`utils.py:271-285`):
+   ```python
+   lead_member = None
+   assist_members = []
+   for member in self.members:
+       if 'lead' in member_role.lower():
+           lead_member = member
+       else:
+           assist_members.append(member)
+   ```
+   - Automatically identifies Lead member by role name
+   - Falls back to first member if no explicit lead found
+
+2. **Task Delegation** (`utils.py:287-307`):
+   ```python
+   delivery_prompt = f'''You are the lead of the medical group which aims to {self.goal}. 
+   You have the following assistant clinicians who work for you:'''
+   delivery = lead_member.chat(delivery_prompt)
+   ```
+   - Lead member formulates investigation strategy
+   - Delegates specific tasks to assistant clinicians
+   - Error handling with fallback to assistant members
+
+3. **Investigation Execution** (`utils.py:309-320`):
+   ```python
+   investigations = []
+   if assist_members:
+       for a_mem in assist_members:
+           investigation = a_mem.chat("You are in a medical group where the goal is to {}. 
+           Your group lead is asking for the following investigations:\n{}\n\n
+           Please remind your expertise and return your investigation summary...".format(self.goal, delivery))
+           investigations.append([a_mem.role, investigation])
+   ```
+   - Each assistant member performs specialized investigations
+   - Results collected and structured by role
+
+4. **Synthesis and Decision** (`utils.py:322-326`):
+   ```python
+   investigation_prompt = f"""The gathered investigation from your assistant clinicians 
+   (or your own initial assessment if working alone) is as follows:\n{gathered_investigation}.
+   \n\nNow, return your answer to the medical query among the option provided.\n\nQuestion: {self.question}"""
+   response = lead_member.chat(investigation_prompt)
+   ```
+   - Lead member synthesizes all investigation results
+   - Makes team-level medical decision based on comprehensive assessment
+
+**Report Compilation** (`utils.py:813-823`):
+```python
+compiled_report_str = "[Initial Assessments]\n"
+# ... compile initial assessments ...
+compiled_report_str += "[Specialist Team Assessments]\n" 
+# ... compile specialist assessments ...
+compiled_report_str += "[Final Review Team Decisions (if any before overall final decision)]\n"
+# ... compile final review decisions ...
+```
+- Structures all team outputs into comprehensive medical report
+- Maintains clear separation between assessment types
+- Preserves team attribution for transparency
+
+#### Step 3: Final Decision from Overall Coordinator (`utils.py:825-834`)
+**Purpose**: Integrate all MDT assessments into unified medical decision
+
+**Overall Coordinator Creation** (`utils.py:828-829`):
+```python
+final_decision_agent = Agent(instruction=final_decision_prompt, role='Overall Coordinator', model_info=model_to_use)
+final_decision_agent.chat(final_decision_prompt)
+```
+- Creates dedicated coordinator agent with overarching medical authority
+- Uses same model as processing teams for consistency
+
+**Final Decision Process** (`utils.py:831-834`):
+```python
+final_decision_dict_adv = final_decision_agent.temp_responses(f"""Combined MDT Investigations and Conclusions:
+\n{compiled_report_str}\n\nBased on all the above, what is the final answer to the original medical query?
+\nQuestion: {question}\nYour answer should be in the format: Answer: A) Example Answer""", img_path=None)
+
+final_response_str = final_decision_dict_adv.get(0.0, "Error: Final coordinator failed to provide a decision.")
+```
+- Temperature=0.0 for deterministic final decision
+- Synthesizes comprehensive MDT report into structured answer
+- Enforces specific answer format for consistency
+
+### Token Usage Tracking (`utils.py:836-851`)
+
+Comprehensive token calculation across all teams and agents:
+
+```python
+# MDT Recruiter agent
+recruiter_usage = recruiter_agent_mdt.get_token_usage()
+sample_input_tokens += recruiter_usage['input_tokens']
+sample_output_tokens += recruiter_usage['output_tokens']
+
+# All team members across all groups
+for group in group_instances_list:
+    for member in group.members:
+        member_usage = member.get_token_usage()
+        sample_input_tokens += member_usage['input_tokens']
+        sample_output_tokens += member_usage['output_tokens']
+
+# Final coordinator agent
+final_agent_usage = final_decision_agent.get_token_usage()
+sample_input_tokens += final_agent_usage['input_tokens']
+sample_output_tokens += final_agent_usage['output_tokens']
+```
+
+### Key Design Features
+
+1. **Hierarchical Team Structure**: Clear lead-assistant relationships within each team
+2. **Specialized Team Roles**: Distinct purposes for assessment, specialization, and review
+3. **Parallel Processing**: Teams operate independently before integration
+4. **Comprehensive Documentation**: Full audit trail from team formation to final decision
+5. **Error Resilience**: Fallback mechanisms for team leadership and communication failures
+6. **Structured Integration**: Systematic compilation and synthesis of team outputs
+
+### Advanced Processing Characteristics
+
+- **Scalability**: Supports variable team compositions and specializations
+- **Modularity**: Teams can be added/removed without affecting core workflow
+- **Quality Assurance**: Multiple layers of review and validation
+- **Transparency**: Complete traceability from individual expert opinions to final decision
+- **Flexibility**: Adapts team formation to specific medical query requirements
+- **Resource Efficiency**: Parallel team processing minimizes sequential dependencies
+
+### Team Interaction Patterns
+
+1. **Intra-team Communication**: Lead delegates → Assistants investigate → Lead synthesizes
+2. **Inter-team Isolation**: Teams work independently to prevent bias propagation
+3. **Central Coordination**: Overall coordinator integrates all team perspectives
+4. **Hierarchical Decision Flow**: Individual → Team → Inter-team → Final coordinator
+
+This advanced processing mode represents the most sophisticated medical decision-making approach in the system, mimicking real-world multidisciplinary medical team consultations with systematic knowledge integration and expert consensus building.
