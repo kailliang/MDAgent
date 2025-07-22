@@ -3,8 +3,8 @@ import re
 import csv
 
 # 4. 给输入文件增加变量名
-input_filename = 'output/medqa_adaptive_331samples.json'
-output_filename = 'evaluation/medqa_adaptive_331samples.csv'
+input_filename = 'output/medqa_advanced_63samples.json'
+output_filename = 'evaluation/medqa_advanced_63samples.csv'
 
 # 读取原始 JSON 文件
 with open(input_filename, 'r', encoding='utf-8') as f:

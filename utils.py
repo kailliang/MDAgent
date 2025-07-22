@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import json
 import random
+import re
 from tqdm import tqdm
 from prettytable import PrettyTable
 from termcolor import cprint
@@ -291,7 +292,7 @@ class Group:
             else:
                 delivery_prompt += "\nYou are working independently or with a predefined protocol to address the goal."
 
-            delivery_prompt += "\n\nNow, given the medical query, provide a short answer to what kind investigations are needed from each assistant clinicians (if any), or outline your approach. Strictly limit your response with no more than 30 words. \n Question: {}".format(self.question)
+            delivery_prompt += "\n\nNow, given the medical query, provide a short answer to what kind investigations are needed from each assistant clinicians (if any), or outline your approach. Strictly limit your response with no more than 50 words. \n Question: {}".format(self.question)
             
             try:
                 delivery = lead_member.chat(delivery_prompt)
@@ -309,7 +310,7 @@ class Group:
             investigations = []
             if assist_members:
                 for a_mem in assist_members:
-                    investigation = a_mem.chat("You are in a medical group where the goal is to {}. Your group lead is asking for the following investigations:\n{}\n\nPlease remind your expertise and return your investigation summary that contains the core information. Strictly limit your response with no more than 50 words.".format(self.goal, delivery))
+                    investigation = a_mem.chat("You are in a medical group where the goal is to {}. Your group lead is asking for the following investigations:\n{}\n\nPlease remind your expertise and return your investigation summary that contains the core information. Strictly limit your response with no more than 100 words.".format(self.goal, delivery))
                     investigations.append([a_mem.role, investigation])
             
             gathered_investigation = ""
@@ -966,8 +967,8 @@ def process_advanced_query(question, model_to_use):
     recruiter_agent_mdt = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent_mdt.chat(recruit_prompt)
 
-    num_teams_to_form = 2
-    num_agents_per_team = 2
+    num_teams_to_form = 3
+    num_agents_per_team = 3
 
     recruited_mdt_response = recruiter_agent_mdt.chat(f"Question: {question}\n\nYou should organize {num_teams_to_form} MDTs with different specialties or purposes and each MDT should have {num_agents_per_team} clinicians. Return your recruitment plan in JSON format with the following structure:\n\n{{\n  \"teams\": [\n    {{\n      \"team_id\": 1,\n      \"team_name\": \"Initial Assessment Team (IAT)\",\n      \"members\": [\n        {{\n          \"member_id\": 1,\n          \"role\": \"Otolaryngologist (ENT Surgeon) (Lead)\",\n          \"expertise_description\": \"Specializes in ear, nose, and throat surgery, including thyroidectomy. This member leads the group due to their critical role in the surgical intervention and managing any surgical complications, such as nerve damage.\"\n        }},\n        {{\n          \"member_id\": 2,\n          \"role\": \"General Surgeon\",\n          \"expertise_description\": \"Provides additional surgical expertise and supports in the overall management of thyroid surgery complications.\"\n        }},\n        {{\n          \"member_id\": 3,\n          \"role\": \"Anesthesiologist\",\n          \"expertise_description\": \"Focuses on perioperative care, pain management, and assessing any complications from anesthesia that may impact voice and airway function.\"\n        }}\n      ]\n    }}\n  ]\n}}\n\nYou must include Initial Assessment Team (IAT) and Final Review and Decision Team (FRDT) in your recruitment plan. Each team should have exactly {num_agents_per_team} members with one designated as Lead. Return only valid JSON without markdown code blocks or explanations.")
 
@@ -1012,8 +1013,8 @@ def process_advanced_query(question, model_to_use):
                     'role': role,
                     'expertise_description': expertise
                 })
-                print(f" Member {member.get('member_id', len(parsed_members))} ({role}): {expertise}")
-            print()
+                # print(f" Member {member.get('member_id', len(parsed_members))} ({role}): {expertise}")
+            # print()
             
             # Create Group instance
             group_instance_obj = Group(team_name, parsed_members, question, examplers=None, model_info=model_to_use)
@@ -1031,7 +1032,7 @@ def process_advanced_query(question, model_to_use):
             print(f"Group {i1+1} - {parsed_group_struct['group_goal']}")
             for i2, member_item in enumerate(parsed_group_struct['members']):
                 print(f" Member {i2+1} ({member_item['role']}): {member_item['expertise_description']}")
-            print()
+            # print()
 
             # Create Group without examplers (no few-shot learning)
             group_instance_obj = Group(parsed_group_struct['group_goal'], parsed_group_struct['members'], question, examplers=None, model_info=model_to_use)
@@ -1075,9 +1076,43 @@ def process_advanced_query(question, model_to_use):
     final_decision_agent = Agent(instruction=final_decision_prompt, role='Overall Coordinator', model_info=model_to_use)
     final_decision_agent.chat(final_decision_prompt)
 
-    final_decision_dict_adv = final_decision_agent.temp_responses(f"""Combined MDT Investigations and Conclusions:\n{compiled_report_str}\n\nBased on all the above, what is the final answer to the original medical query?\nQuestion: {question}\nYour answer should strictly be in the following format: \nAnswer: A) Example Answer \n DO NOT include any explanation.""", img_path=None)
+    # Create JSON-formatted prompt similar to arbitrator pattern
+    coordinator_prompt = f"""You are a medical coordinator. Review the following MDT investigations and conclusions and provide your final decision in JSON format:
+
+Combined MDT Investigations and Conclusions:
+{compiled_report_str}
+
+Question: {question}
+
+Analyze all MDT team assessments and provide your final decision in exactly this JSON format:
+
+{{
+  "analysis": "Your analysis of the MDT assessments and rationale for final decision in no more than 300 words",
+  "final_answer": "X) Example Answer"
+}}
+
+**Requirements:**
+- Consider all MDT team assessments in your analysis
+- Final answer must correspond to one of the provided options
+- Return ONLY the JSON, no other text
+"""
     
-    final_response_str = final_decision_dict_adv.get(0.0, "Error: Final coordinator failed to provide a decision.")
+    final_decision_dict_adv = final_decision_agent.temp_responses(coordinator_prompt, img_path=None)
+    raw_final_response = final_decision_dict_adv.get(0.0, "Error: Final coordinator failed to provide a decision.")
+    
+    # Parse coordinator JSON response similar to arbitrator parsing
+    try:
+        json_match = re.search(r'\{[^{}]*"analysis"\s*:[^{}]*"final_answer"\s*:\s*"[^"]*"[^{}]*\}', raw_final_response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            final_decision_dict = json.loads(json_str)
+            final_response_str = final_decision_dict.get('final_answer', raw_final_response)
+        else:
+            # Fallback to raw response if JSON parsing fails
+            final_response_str = raw_final_response
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        # Fallback to raw response if JSON parsing fails
+        final_response_str = raw_final_response
     cprint(f"Overall Coordinated Final Decision: {final_response_str}", "green")
     
     # Calculate total token usage for this sample
