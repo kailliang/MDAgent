@@ -18,6 +18,9 @@ import traceback   # For full traceback if other errors occur
 # Load environment variables from .env file
 load_dotenv()
 
+# Debug/Visualization settings
+SHOW_INTERACTION_TABLE = False  # Set to True to display agent interaction table in intermediate mode
+
 # Global token usage tracking
 GLOBAL_TOKEN_USAGE = {
     'total_input_tokens': 0,
@@ -221,7 +224,9 @@ class Agent:
         
         elif self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             try:
-                response = self._chat.send_message(str(message))
+                # Configure generation with temperature=0.0 for deterministic responses
+                generation_config = genai.GenerationConfig(temperature=0.0)
+                response = self._chat.send_message(str(message), generation_config=generation_config)
                 
                 # Track token usage for Gemini
                 if hasattr(response, 'usage_metadata'):
@@ -349,18 +354,24 @@ def parse_hierarchy(info, emojis):
             hierarchy_str = 'Independent'
         
         if 'independent' not in hierarchy_str.lower():
-            parent_name = hierarchy_str.split(">")[0].strip()
-            child_name = hierarchy_str.split(">")[1].strip()
+            hierarchy_parts = hierarchy_str.split(">")
+            if len(hierarchy_parts) >= 2:
+                parent_name = hierarchy_parts[0].strip()
+                child_name = hierarchy_parts[1].strip()
 
-            parent_node_found = False
-            for agent_node in agents:
-                if agent_node.name.split("(")[0].strip().lower() == parent_name.strip().lower():
-                    child_agent_node = Node("{} ({})".format(child_name, get_emoji(count)), agent_node)
-                    agents.append(child_agent_node)
-                    parent_node_found = True
-                    break
-            if not parent_node_found:
-                cprint(f"Warning: Parent '{parent_name}' for child '{child_name}' not found. Adding child to moderator.", "yellow")
+                parent_node_found = False
+                for agent_node in agents:
+                    if agent_node.name.split("(")[0].strip().lower() == parent_name.strip().lower():
+                        child_agent_node = Node("{} ({})".format(child_name, get_emoji(count)), agent_node)
+                        agents.append(child_agent_node)
+                        parent_node_found = True
+                        break
+                if not parent_node_found:
+                    cprint(f"Warning: Parent '{parent_name}' for child '{child_name}' not found. Adding child to moderator.", "yellow")
+                    agent_node = Node("{} ({})".format(expert_name, get_emoji(count)), moderator)
+            else:
+                # Invalid hierarchy format, treat as independent
+                cprint(f"Warning: Invalid hierarchy format '{hierarchy_str}' for expert '{expert_name}'. Treating as independent.", "yellow")
                 agent_node = Node("{} ({})".format(expert_name, get_emoji(count)), moderator)
                 agents.append(agent_node)
         else:
@@ -461,32 +472,70 @@ def determine_difficulty(question, difficulty):
     if difficulty != 'adaptive':
         return difficulty, 0, 0  # Return difficulty with zero token usage for non-adaptive
     
-    difficulty_prompt = f"""Now, given the medical query as below, you need to decide the difficulty/complexity of it:
+    difficulty_prompt = f"""Analyze the following medical query and determine its complexity level.
+
+Medical Query:
 {question}
 
-Please indicate the difficulty/complexity of the medical query among below options:
-1) basic: a single medical agent can output an answer.
-2) intermediate: number of medical experts with different expertise should dicuss and make final decision.
-3) advanced: multiple teams of clinicians from different departments need to collaborate with each other to make final decision."""
+**Difficulty Levels:**
+- **basic**: a single medical agent can output an answer.
+- **intermediate**: number of medical experts with different expertise should dicuss and make final decision.
+- **advanced**: multiple teams of clinicians from different departments need to collaborate with each other to make final decision.
+Provide your assessment in the following JSON format:
+
+{{
+  "difficulty": "basic|intermediate|advanced"
+}}
+
+**Requirements:**
+- Return ONLY the JSON format, no other text
+- Difficulty must be exactly one of: basic, intermediate, advanced
+"""
     
-    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.', role='medical expert', model_info='gemini-2.5-flash-lite-preview-06-17')
-    medical_agent.chat('You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.')
-    response = medical_agent.chat(difficulty_prompt)
+    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and determines the complexity level of medical queries.', role='medical expert', model_info='gemini-2.5-flash-lite-preview-06-17')
+    medical_agent.chat('You are a medical expert who conducts initial assessment and determines the complexity level of medical queries.')
+    response_dict = medical_agent.temp_responses(difficulty_prompt)
+    response = response_dict.get(0.0, "")
 
     # Get token usage from the difficulty determination agent
     difficulty_agent_usage = medical_agent.get_token_usage()
     difficulty_input_tokens = difficulty_agent_usage['input_tokens']
     difficulty_output_tokens = difficulty_agent_usage['output_tokens']
 
-    if 'basic' in response.lower() or '1)' in response.lower():
-        return 'basic', difficulty_input_tokens, difficulty_output_tokens
-    elif 'intermediate' in response.lower() or '2)' in response.lower():
-        return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
-    elif 'advanced' in response.lower() or '3)' in response.lower():
-        return 'advanced', difficulty_input_tokens, difficulty_output_tokens
-    else:
-        cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
-        return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+    # Parse JSON response
+    try:
+        json_match = re.search(r'\{\s*"difficulty"\s*:\s*"([^"]+)"\s*\}', response, re.DOTALL)
+        if json_match:
+            determined_difficulty = json_match.group(1).lower().strip()
+            
+            if determined_difficulty in ['basic', 'intermediate', 'advanced']:
+                return determined_difficulty, difficulty_input_tokens, difficulty_output_tokens
+            else:
+                cprint(f"Warning: Invalid difficulty level '{determined_difficulty}' in JSON response. Defaulting to intermediate.", "yellow")
+                return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+        else:
+            # Fallback to original text parsing
+            if 'basic' in response.lower():
+                return 'basic', difficulty_input_tokens, difficulty_output_tokens
+            elif 'intermediate' in response.lower():
+                return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+            elif 'advanced' in response.lower():
+                return 'advanced', difficulty_input_tokens, difficulty_output_tokens
+            else:
+                cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
+                return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        # Fallback to original text parsing
+        cprint(f"Warning: JSON parsing failed for difficulty response. Using fallback text parsing.", "yellow")
+        if 'basic' in response.lower():
+            return 'basic', difficulty_input_tokens, difficulty_output_tokens
+        elif 'intermediate' in response.lower():
+            return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+        elif 'advanced' in response.lower():
+            return 'advanced', difficulty_input_tokens, difficulty_output_tokens
+        else:
+            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
+            return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, model_to_use):
     import re
@@ -762,20 +811,21 @@ def process_intermediate_query(question, model_to_use):
         medical_agents_list.append(_agent_instance)
 
     for idx, agent_tuple in enumerate(agents_data_parsed):
-        try:
-            emoji = agent_emoji[idx % len(agent_emoji)]
-            agent_name_part = str(agent_tuple[0]).split('-')[0].strip()
-            agent_desc_part = str(agent_tuple[0]).split('-', 1)[1].strip() if '-' in str(agent_tuple[0]) else "N/A"
-            print(f"Agent {idx+1} ({emoji} {agent_name_part}): {agent_desc_part}")
-        except IndexError:
-             print(f"Agent {idx+1} ({agent_emoji[idx % len(agent_emoji)]}): {agent_tuple[0]}")
-        except Exception as e:
-            cprint(f"Error printing agent info: {agent_tuple} - {e}", "red")
+        if SHOW_INTERACTION_TABLE:
+            try:
+                emoji = agent_emoji[idx % len(agent_emoji)]
+                agent_name_part = str(agent_tuple[0]).split('-')[0].strip()
+                agent_desc_part = str(agent_tuple[0]).split('-', 1)[1].strip() if '-' in str(agent_tuple[0]) else "N/A"
+                print(f"Agent {idx+1} ({emoji} {agent_name_part}): {agent_desc_part}")
+            except IndexError:
+                 print(f"Agent {idx+1} ({agent_emoji[idx % len(agent_emoji)]}): {agent_tuple[0]}")
+            except Exception as e:
+                cprint(f"Error printing agent info: {agent_tuple} - {e}", "red")
 
     # print()
     cprint("[INFO] Step 2. Collaborative Decision Making", 'yellow', attrs=['blink'])
     cprint("[INFO] Step 2.1. Hierarchy Selection", 'yellow', attrs=['blink'])
-    if hierarchy_agents_nodes:
+    if hierarchy_agents_nodes and SHOW_INTERACTION_TABLE:
         try:
             from pptree import print_tree
             print_tree(hierarchy_agents_nodes[0], horizontal=False)
@@ -784,7 +834,6 @@ def process_intermediate_query(question, model_to_use):
         except Exception as e:
             cprint(f"Error printing tree: {e}", "red")
 
-    print()
 
     num_rounds = 3 # 这里改成 3
     num_turns = 3 # 这里改成 3
@@ -792,7 +841,7 @@ def process_intermediate_query(question, model_to_use):
 
     interaction_log = {f'Round {r}': {f'Turn {t}': {f'Agent {s}': {f'Agent {trg}': None for trg in range(1, num_active_agents + 1)} for s in range(1, num_active_agents + 1)} for t in range(1, num_turns + 1)} for r in range(1, num_rounds + 1)}
 
-    cprint("[INFO] Step 2.2. Participatory Debate", 'yellow', attrs=['blink'])
+    # cprint("[INFO] Step 2.2. Participatory Debate", 'yellow', attrs=['blink'])
 
     round_opinions_log = {r: {} for r in range(1, num_rounds+1)}
     initial_report_str = ""
@@ -806,7 +855,8 @@ def process_intermediate_query(question, model_to_use):
 
     final_answer_map = None
     for r_idx in range(1, num_rounds+1):
-        print(f"== Round {r_idx} ==")
+        if SHOW_INTERACTION_TABLE:
+            print(f"== Round {r_idx} ==")
         round_name_str = f"Round {r_idx}"
         
         summarizer_agent = Agent(instruction="You are a medical assistant who excels at summarizing and synthesizing based on multiple experts from various domain experts.", role="medical assistant", model_info=model_to_use)
@@ -818,7 +868,8 @@ def process_intermediate_query(question, model_to_use):
         num_participated_this_round = 0
         for t_idx in range(num_turns):
             turn_name_str = f"Turn {t_idx + 1}"
-            print(f"|_{turn_name_str}")
+            if SHOW_INTERACTION_TABLE:
+                print(f"|_{turn_name_str}")
 
             num_participated_this_turn = 0
             for agent_idx, agent_instance_loop in enumerate(medical_agents_list):
@@ -854,14 +905,16 @@ def process_intermediate_query(question, model_to_use):
                             
                             source_emoji = agent_emoji[agent_idx % len(agent_emoji)]
                             target_emoji = agent_emoji[target_agent_actual_idx % len(agent_emoji)]
-                            print(f" Agent {agent_idx+1} ({source_emoji} {medical_agents_list[agent_idx].role}) -> Agent {target_expert_idx_chosen} ({target_emoji} {medical_agents_list[target_agent_actual_idx].role}) : {specific_question_to_expert}")
+                            if SHOW_INTERACTION_TABLE:
+                                print(f" Agent {agent_idx+1} ({source_emoji} {medical_agents_list[agent_idx].role}) -> Agent {target_expert_idx_chosen} ({target_emoji} {medical_agents_list[target_agent_actual_idx].role}) : {specific_question_to_expert}")
                             interaction_log[round_name_str][turn_name_str][f'Agent {agent_idx+1}'][f'Agent {target_expert_idx_chosen}'] = specific_question_to_expert
                         else:
                             cprint(f"Agent {agent_idx+1} chose an invalid expert index: {target_expert_idx_chosen}", "yellow")
                 
                     num_participated_this_turn += 1
                 else:
-                    print(f" Agent {agent_idx+1} ({agent_emoji[agent_idx % len(agent_emoji)]} {agent_instance_loop.role}): \U0001f910")
+                    if SHOW_INTERACTION_TABLE:
+                        print(f" Agent {agent_idx+1} ({agent_emoji[agent_idx % len(agent_emoji)]} {agent_instance_loop.role}): \U0001f910")
 
             num_participated_this_round = num_participated_this_turn
             if num_participated_this_turn == 0:
@@ -886,34 +939,36 @@ def process_intermediate_query(question, model_to_use):
             current_round_final_answers[agent_instance_final.role] = response
         final_answer_map = current_round_final_answers
 
-    print('\nInteraction Log Summary Table')        
-    myTable = PrettyTable([''] + [f"Agent {i+1} ({agent_emoji[i%len(agent_emoji)]})" for i in range(num_active_agents)])
+    # Display interaction table only if enabled
+    if SHOW_INTERACTION_TABLE:
+        print('\nInteraction Log Summary Table')        
+        myTable = PrettyTable([''] + [f"Agent {i+1} ({agent_emoji[i%len(agent_emoji)]})" for i in range(num_active_agents)])
 
-    for i in range(1, num_active_agents + 1):
-        row_data = [f"Agent {i} ({agent_emoji[(i-1)%len(agent_emoji)]})"]
-        for j in range(1, num_active_agents + 1):
-            if i == j:
-                row_data.append('')
-            else:
-                i_to_j_spoke = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {i}'][f'Agent {j}'] is not None
-                                 for k in range(1, num_rounds + 1) if f'Round {k}' in interaction_log
-                                 for l in range(1, num_turns + 1) if f'Turn {l}' in interaction_log[f'Round {k}'])
-                j_to_i_spoke = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {j}'][f'Agent {i}'] is not None
-                                 for k in range(1, num_rounds + 1) if f'Round {k}' in interaction_log
-                                 for l in range(1, num_turns + 1) if f'Turn {l}' in interaction_log[f'Round {k}'])
-                
-                if not i_to_j_spoke and not j_to_i_spoke:
-                    row_data.append(' ')
-                elif i_to_j_spoke and not j_to_i_spoke:
-                    row_data.append(f'\u270B ({i}->{j})')
-                elif j_to_i_spoke and not i_to_j_spoke:
-                    row_data.append(f'\u270B ({i}<-{j})')
-                elif i_to_j_spoke and j_to_i_spoke:
-                    row_data.append(f'\u270B ({i}<->{j})')
-        myTable.add_row(row_data)
-        if i != num_active_agents:
-             myTable.add_row(['---' for _ in range(num_active_agents + 1)])
-    print(myTable)
+        for i in range(1, num_active_agents + 1):
+            row_data = [f"Agent {i} ({agent_emoji[(i-1)%len(agent_emoji)]})"]
+            for j in range(1, num_active_agents + 1):
+                if i == j:
+                    row_data.append('')
+                else:
+                    i_to_j_spoke = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {i}'][f'Agent {j}'] is not None
+                                     for k in range(1, num_rounds + 1) if f'Round {k}' in interaction_log
+                                     for l in range(1, num_turns + 1) if f'Turn {l}' in interaction_log[f'Round {k}'])
+                    j_to_i_spoke = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {j}'][f'Agent {i}'] is not None
+                                     for k in range(1, num_rounds + 1) if f'Round {k}' in interaction_log
+                                     for l in range(1, num_turns + 1) if f'Turn {l}' in interaction_log[f'Round {k}'])
+                    
+                    if not i_to_j_spoke and not j_to_i_spoke:
+                        row_data.append(' ')
+                    elif i_to_j_spoke and not j_to_i_spoke:
+                        row_data.append(f'\u270B ({i}->{j})')
+                    elif j_to_i_spoke and not i_to_j_spoke:
+                        row_data.append(f'\u270B ({i}<-{j})')
+                    elif i_to_j_spoke and j_to_i_spoke:
+                        row_data.append(f'\u270B ({i}<->{j})')
+            myTable.add_row(row_data)
+            if i != num_active_agents:
+                 myTable.add_row(['---' for _ in range(num_active_agents + 1)])
+        print(myTable)
 
     cprint("\n[INFO] Step 3. Final Decision", 'yellow', attrs=['blink'])
     

@@ -12,7 +12,7 @@ from utils import determine_difficulty, create_question
 
 def main():
     # Input and output paths
-    input_file = 'data/medqa/331test.jsonl'
+    input_file = 'data/medqa/134test.jsonl'
     output_dir = 'data/medqa'
     
     # Check if input file exists
