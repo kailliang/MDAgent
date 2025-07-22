@@ -3,8 +3,8 @@ import re
 import csv
 
 # 4. 给输入文件增加变量名
-input_filename = 'output/medqa_basic_331samples.json'
-output_filename = 'evaluation/medqa_basic_331samples.csv'
+input_filename = 'output/medqa_adaptive_331samples.json'
+output_filename = 'evaluation/medqa_adaptive_331samples.csv'
 
 # 读取原始 JSON 文件
 with open(input_filename, 'r', encoding='utf-8') as f:
@@ -44,15 +44,28 @@ processed_data = []
 total_correct = 0
 total_samples = len(data)
 
+# Track correct/total for each difficulty
+correct_by_diff = {'basic': 0, 'intermediate': 0, 'advanced': 0}
+total_by_diff = {'basic': 0, 'intermediate': 0, 'advanced': 0}
+
 for sample in data:
     question_id = sample.get('question_id', '')
     label = sample.get('label', '')
     resp = sample.get('response', '')
+
+    response_text = ''
     if isinstance(resp, dict):
-        resp_val = resp.get('0.0', '')
-        response = extract_final_answer_or_answer(resp_val)
+        if 'final_answer' in resp:
+            response_text = resp['final_answer']
+        else:
+            response_text = resp.get('0.0', '')
+            if not response_text and 'majority_vote' in resp:
+                response_text = resp['majority_vote']
     else:
-        response = extract_final_answer_or_answer(str(resp))
+        response_text = str(resp)
+    
+    response = extract_final_answer_or_answer(response_text)
+
     difficulty = sample.get('difficulty', '')
     token_usage = sample.get('token_usage', {})
     input_tokens = token_usage.get('input_tokens', '')
@@ -62,6 +75,11 @@ for sample in data:
     is_correct = 1 if label == response else 0
     total_correct += is_correct
 
+    # Track per-difficulty
+    if difficulty in correct_by_diff:
+        correct_by_diff[difficulty] += is_correct
+        total_by_diff[difficulty] += 1
+
     processed_data.append([
         question_id, label, response, difficulty, 
         input_tokens, output_tokens, total_tokens, is_correct
@@ -69,6 +87,13 @@ for sample in data:
 
 # 2. 增加计算准确度的代码
 accuracy = total_correct / total_samples if total_samples > 0 else 0
+
+# Report per-difficulty accuracy
+for diff in ['basic', 'intermediate', 'advanced']:
+    total = total_by_diff[diff]
+    correct = correct_by_diff[diff]
+    acc = correct / total if total > 0 else 0
+    print(f'Accuracy for {diff}: {acc:.4f} ({correct}/{total})')
 
 # 1. 输出文件格式改成csv
 with open(output_filename, 'w', newline='', encoding='utf-8') as f:
