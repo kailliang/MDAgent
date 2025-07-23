@@ -534,8 +534,8 @@ Provide your assessment in the following JSON format:
         elif 'advanced' in response.lower():
             return 'advanced', difficulty_input_tokens, difficulty_output_tokens
         else:
-            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to basic.", "red")
-            return 'basic', difficulty_input_tokens, difficulty_output_tokens
+            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "red")
+            return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, model_to_use):
     import re
@@ -677,9 +677,7 @@ All experts should be marked as "Independent" with equal authority. Return ONLY 
             }
         
         expert_responses.append(expert_response)
-    
-    print()
-    
+        
     # Step 3: Arbitrator analysis and final decision
     cprint("[INFO] Step 3. Arbitrator Final Decision", 'yellow', attrs=['blink'])
     
@@ -737,7 +735,6 @@ Analyze all expert opinions and provide your final decision in exactly this JSON
         }
     
     print(f"Arbitrator Final Decision: {final_decision_dict.get('final_answer', 'Error')}")
-    print()
     
     # Calculate token usage for this sample
     recruiter_usage = recruiter_agent.get_token_usage()
@@ -766,43 +763,47 @@ def process_intermediate_query(question, model_to_use):
     
     recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent.chat(recruit_prompt)
-    
+
     num_experts_to_recruit = 3
-    recruited_text = recruiter_agent.chat(f"""Question: {question}
 
-You need to recruit {num_experts_to_recruit} medical experts with different specialties to analyze this question and collaborate on the answer. 
+    recruitment_query = f"""
+    Question: {question}
 
-Please return your recruitment plan in JSON format:
+    You can recruit {num_experts_to_recruit} experts in different medical expertise. 
+    Considering the medical question and the options for the answer, what kind of experts 
+    will you recruit to better make an accurate answer?
 
-{{
-  "experts": [
+    Also, you need to specify the communication structure between experts 
+    (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), 
+    or indicate if they are independent.
+
+    Please answer strictly in the following JSON format:
     {{
-      "id": 1,
-      "role": "Cardiologist",
-      "expertise_description": "Specializes in heart and cardiovascular system disorders",
-      "hierarchy": "Independent"
-    }},
-    {{
-      "id": 2,
-      "role": "Pulmonologist", 
-      "expertise_description": "Specializes in respiratory system diseases",
-      "hierarchy": "Independent"
-    }},
-    {{
-      "id": 3,
-      "role": "Emergency Medicine Physician",
-      "expertise_description": "Specializes in acute care and emergency medical situations", 
-      "hierarchy": "Cardiologist > Emergency Medicine Physician"
+    "experts": [
+        {{
+        "id": 1,
+        "role": "Pediatrician",
+        "description": "Specializes in the medical care of infants, children, and adolescents.",
+        "hierarchy": "Independent"
+        }},
+        {{
+        "id": 2,
+        "role": "Cardiologist",
+        "description": "Focuses on the diagnosis and treatment of heart and blood vessel-related conditions.",
+        "hierarchy": "Pediatrician > Cardiologist"
+        }},
+        {{
+        "id": 3,
+        "role": "Pulmonologist",
+        "description": "Specializes in the diagnosis and treatment of respiratory system disorders.",
+        "hierarchy": "Independent"
+        }}
+    ]
     }}
-  ]
-}}
 
-**Requirements:**
-- Each expert should have a unique medical specialty relevant to the question
-- Hierarchy can be "Independent" or specify relationships like "Expert1 > Expert2"
-- Return ONLY the JSON, no other text
-
-Question: {question}""")
+    Do not include any explanations or reasons, just return the JSON structure.
+    """
+    recruited_text = recruiter_agent.chat(recruitment_query)
 
     # Parse JSON response for expert recruitment
     try:
@@ -1057,7 +1058,6 @@ Question: {question}""")
     final_decision_output = {'majority_vote': majority_vote_response}
 
     print(f"{'\U0001F468\u200D\u2696\uFE0F'} moderator's final decision: {majority_vote_response}")
-    print()
 
     # Calculate total token usage for this sample
     recruiter_usage = recruiter_agent.get_token_usage()

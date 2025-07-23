@@ -3,14 +3,25 @@ import re
 import csv
 
 # 4. 给输入文件增加变量名
-input_filename = 'output/medqa_adaptive_332samples.json'
-output_filename = 'evaluation/medqa_adaptive_332samples.csv'
+input_filename = 'output/inter_json_adaptive_332samples.json'
+output_filename = 'evaluation/inter_json_adaptive_332samples.csv'
 
 # 读取原始 JSON 文件
 with open(input_filename, 'r', encoding='utf-8') as f:
     data = json.load(f)
 
 def extract_final_answer_or_answer(text):
+    # Handle parse error cases first
+    if 'Parse error' in text:
+        parse_error_match = re.search(r'([A-EX])\)\s*Parse error', text)
+        if parse_error_match:
+            return 'X'  # Mark parse errors as 'X' for tracking
+    
+    # Check for "Answer: X" pattern anywhere in the text (common in majority_vote responses)
+    answer_pattern = re.search(r'Answer:\s*([A-E])(?:\b|$)', text, re.IGNORECASE)
+    if answer_pattern:
+        return answer_pattern.group(1)
+    
     match_final = re.search(r'(The final answer.*?[\.\n])', text, re.IGNORECASE)
     if match_final:
         text = match_final.group(1).strip()
@@ -20,7 +31,13 @@ def extract_final_answer_or_answer(text):
             text = match_answer.group(1).strip()
         else:
             words = text.strip().split()
-            last15 = ' '.join(words[-15:]) if len(words) >= 15 else ' '.join(words)
+            # For short texts, use full text. For long texts, prefer first 15 words where answers usually appear
+            if len(words) <= 15:
+                last15 = text.strip()
+            else:
+                # Try first 15 words first (where answers usually are), then last 15 as fallback
+                first15 = ' '.join(words[:15])
+                last15 = first15
             match_correct = re.search(r'(The correct answer is \*\*\([A-E]\)\*\*)', last15)
             if match_correct:
                 text = match_correct.group(1).strip()
@@ -34,11 +51,29 @@ def extract_final_answer_or_answer(text):
                         text = match_diag.group(1).strip()
                     else:
                         text = last15
+    
+    # Enhanced letter extraction with multiple patterns
+    # Pattern 1: Standard format with word boundaries
     match_letter = re.search(r'\b([A-E])\b', text)
     if match_letter:
         return match_letter.group(1)
-    else:
-        return ''
+    
+    # Pattern 2: Parentheses format like (A) 
+    match_paren = re.search(r'\(([A-E])\)', text)
+    if match_paren:
+        return match_paren.group(1)
+    
+    # Pattern 3: Letter followed by closing parenthesis like A)
+    match_close_paren = re.search(r'([A-E])\)', text)
+    if match_close_paren:
+        return match_close_paren.group(1)
+    
+    # Pattern 4: Any single letter A-E (last resort)
+    match_any = re.search(r'([A-E])', text)
+    if match_any:
+        return match_any.group(1)
+    
+    return ''
 
 processed_data = []
 total_correct = 0

@@ -4,7 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a research implementation of "MDAgents: An Adaptive Collaboration of LLMs for Medical Decision-Making" from NeurIPS 2024. The system uses multiple Large Language Models (LLMs) to collaboratively solve medical questions through three adaptive difficulty levels: basic (single agent), intermediate (expert collaboration), and advanced (multi-disciplinary teams).
+This is a research implementation of "MDAgents: An Adaptive Collaboration of LLMs for Medical Decision-Making" from NeurIPS 2024. The system uses multiple Large Language Models (LLMs) to collaboratively solve medical questions through three adaptive difficulty levels: basic (expert arbitration), intermediate (expert collaboration), and advanced (multi-disciplinary teams).
+
+## Current Status (Ultimate Branch)
+
+### Performance Results (Latest - Updated)
+- **Basic Mode**: 83.18% accuracy (178/214 correct) - significantly improved from 71.60%
+- **Intermediate Mode**: 78.87% accuracy (56/71 correct) with multi-agent collaboration
+- **Advanced Mode**: 78.72% accuracy (37/47 correct) with MDT approach
+- **Overall Adaptive**: 81.63% accuracy (271/332 correct) across all difficulty levels
+- **Branch Status**: `ultimate` branch contains the most optimized and stable version
+
+### Latest Improvements
+- ✅ **JSON-based Communication**: All processing modes use structured JSON responses
+- ✅ **Enhanced Basic Mode**: 3-expert recruitment + arbitrator system (was single agent)
+- ✅ **Improved Evaluation System**: Enhanced parsing for diverse response formats
+- ✅ **Debug Controls**: `SHOW_INTERACTION_TABLE` for production vs development output
+- ✅ **Processing Controls**: Skip switches (`SKIP_BASIC`, `SKIP_INTERMEDIATE`, `SKIP_ADVANCED`)
+- ✅ **Word Limits**: Enforced response limits (50-300 words) for efficiency
+- ✅ **Robust Error Handling**: Multiple JSON parsing strategies with fallbacks
 
 ## Development Setup
 
@@ -27,9 +45,32 @@ Available models:
 
 Difficulty modes:
 - `adaptive`: System determines complexity automatically
-- `basic`: Single agent processing
-- `intermediate`: Expert collaboration with debate
+- `basic`: 3-expert recruitment + arbitrator processing
+- `intermediate`: Expert collaboration with multi-round debate
 - `advanced`: Multi-disciplinary team approach
+
+### Evaluation and Testing
+```bash
+# Evaluate system output and generate CSV reports
+python evaluate_text_output.py
+
+# Split test data by difficulty for analysis
+python split_test_data.py
+
+# Extract specific questions by ID for debugging
+python extract_by_question_id.py
+```
+
+Key evaluation files:
+- `output/`: JSON output files from system runs (e.g., `medqa_adaptive_332samples.json`)
+- `evaluation/`: CSV evaluation reports with accuracy metrics (e.g., `medqa_adaptive_332samples.csv`)
+- `data/medqa/`: Test datasets split by difficulty level
+
+**Important**: The `evaluate_text_output.py` script contains configurable input/output filenames at the top:
+```python
+input_filename = 'output/inter_json_adaptive_332samples.json'  # Update as needed
+output_filename = 'evaluation/inter_json_adaptive_332samples.csv'  # Update as needed
+```
 
 ## Architecture
 
@@ -39,15 +80,26 @@ Difficulty modes:
 2. **Group Class** (`utils.py:190-268`): Manages collaborative medical expert teams
 3. **Processing Pipeline** (`main.py:58-121`): Main execution loop with difficulty assessment and routing
 
-### Processing Modes
+### Processing Modes (Updated Architecture)
 
-- **Basic Processing** (`utils.py:415-446`): Single medical agent with few-shot examples
-- **Intermediate Processing** (`utils.py:448-665`): 
-  - Expert recruitment and hierarchy establishment
-  - Multi-round collaborative debate between agents
-  - Moderated final decision making
-- **Advanced Processing** (`utils.py:667-737`): 
-  - Multi-disciplinary team (MDT) formation
+- **Basic Processing** (`utils.py:540-752`): 
+  - **Expert Recruitment**: 3 independent medical specialists with equal authority
+  - **Independent Analysis**: Each expert provides structured JSON response with reasoning
+  - **Arbitrator Decision**: Medical arbitrator synthesizes expert opinions into final answer
+  - **Performance**: 83.18% accuracy, highly token-efficient
+  
+- **Intermediate Processing** (`utils.py:755-945`): 
+  - **Expert Recruitment**: 3 experts with hierarchical relationships
+  - **Multi-round Debate**: 3 rounds × 3 turns collaborative discussion
+  - **JSON Communication**: Structured participation decisions and expert selection
+  - **Moderated Decision**: Final moderator synthesizes team consensus
+  - **Word Limits**: 50-200 word responses for efficiency
+  
+- **Advanced Processing** (`utils.py:947-1031`): 
+  - **MDT Formation**: 3 multidisciplinary teams (IAT, Specialist, FRDT)
+  - **JSON Team Structure**: Structured team and member definitions
+  - **Parallel Assessment**: Teams work independently then coordinate
+  - **Overall Coordinator**: Final decision synthesis with JSON analysis format
   - Internal team assessments
   - Cross-team coordination and final decision
 
@@ -55,22 +107,82 @@ Difficulty modes:
 
 - Input: JSONL files in `data/{dataset}/` (test.jsonl, train.jsonl)
 - Output: JSON files in `output/` with format: `{model}_{dataset}_{difficulty}_{samples}samples.json`
-- Each result includes: question, options, ground truth, model response, and determined difficulty
+- Each result includes: question, options, ground truth, model response, determined difficulty, and token usage
+
+### System Controls (main.py)
+
+```python
+# Processing skip switches - control which difficulty levels to process
+SKIP_BASIC = False          # Skip basic difficulty questions
+SKIP_INTERMEDIATE = False   # Skip intermediate difficulty questions  
+SKIP_ADVANCED = False       # Skip advanced difficulty questions
+
+# Debug controls (utils.py)
+SHOW_INTERACTION_TABLE = False  # Display agent interaction tables in intermediate mode
+```
 
 ### Key Utility Functions
 
 - `setup_model()`: Configures API clients based on model type
-- `determine_difficulty()`: Uses LLM to assess question complexity for adaptive mode
+- `determine_difficulty()`: Uses LLM with JSON format to assess question complexity for adaptive mode
 - `load_data()`: Loads test questions and exemplars from dataset files
 - `create_question()`: Formats questions with randomized multiple choice options
 
+### Evaluation System (`evaluate_text_output.py`)
+
+Enhanced parsing system with multi-pattern answer extraction:
+
+```python
+def extract_final_answer_or_answer(text):
+    # Handles multiple response formats:
+    # 1. "Answer: C" patterns (common in majority_vote responses)
+    # 2. "B) Normal hemoglobin..." patterns  
+    # 3. "(A) Some answer" parentheses formats
+    # 4. Parse error cases marked as 'X'
+    # 5. Various structured answer formats
+```
+
+**Key Features**:
+- **Multi-pattern Recognition**: Handles diverse LLM response formats
+- **Parse Error Tracking**: Identifies and tracks parsing failures
+- **CSV Export**: Generates detailed evaluation reports with per-difficulty metrics
+- **Answer Validation**: Robust extraction from complex majority_vote responses
+
+**Critical Parsing Improvements**:
+- Early "Answer: X" detection for long majority_vote responses
+- Enhanced word boundary handling for answer extraction
+- Fallback patterns for malformed or incomplete responses
+- Support for various parentheses and formatting styles
+
 ## Common Patterns
 
-- All LLM interactions go through the Agent class for consistent error handling
-- Unicode cleaning is performed on API responses to handle encoding issues
-- Temperature settings: 0.0 for deterministic responses, 0.7 for creative collaboration
-- Retry logic implemented for API failures with exponential backoff
-- Results are saved incrementally to prevent data loss on interruption
+- **JSON-First Communication**: All agent interactions use structured JSON formats with regex parsing and fallbacks
+- **Multi-layer Error Handling**: JSON parsing → regex extraction → text fallback → default responses
+- **Temperature Control**: 0.0 for deterministic final decisions, 0.7 for creative expert collaboration
+- **Token Efficiency**: Word limits enforced across all processing modes (50-300 words)
+- **Comprehensive Tracking**: Token usage monitored for all agents, recruiters, and coordinators
+- **Production-Ready Output**: Debug controls provide clean output for production vs verbose for development
+
+## Development Priorities
+
+### Completed ✅
+- **Basic Mode Optimization**: Enhanced from single agent to 3-expert + arbitrator system
+- **JSON Communication**: Structured responses across all processing modes
+- **Error Resilience**: Multi-layer parsing with comprehensive fallbacks
+- **Performance Measurement**: Accurate evaluation scripts for new JSON formats
+- **Debug Controls**: Clean production output with optional verbose debugging
+
+### Current Focus
+- **Performance Optimization**: Recent improvements achieved 81.63% overall accuracy
+- **Evaluation System Refinement**: Enhanced parsing handles diverse response formats
+- **Response Format Standardization**: Improved JSON parsing and fallback mechanisms
+- **Token Cost Analysis**: Efficiency optimization while maintaining accuracy
+
+### Recent Achievements (Latest Updates)
+- **Enhanced Basic Mode**: Improved from 71.60% to 83.18% accuracy through better expert recruitment
+- **Robust Evaluation**: Fixed parsing for complex majority_vote responses and diverse answer formats
+- **System Reliability**: Comprehensive error handling for malformed LLM responses
+- **Performance Tracking**: Detailed CSV reporting with per-difficulty accuracy metrics
 
 ## Detailed Analysis: process_intermediate_query Function
 

@@ -173,7 +173,7 @@ output_dir = os.path.join(os.getcwd(), 'output')
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-output_filename = f'{args.dataset}_{args.difficulty}_{num_to_process}samples.json'
+output_filename = f'{args.dataset}_{args.difficulty}_{num_to_process}samples_flash.json'
 output_path = os.path.join(output_dir, output_filename)
 
 try:
