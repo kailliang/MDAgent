@@ -619,27 +619,58 @@ def process_basic_query(question, model_to_use):
             # Try to extract and validate JSON
             try:
                 # Look for JSON pattern in the response
-                json_match = re.search(r'\{[^{}]*"reasoning"\s*:[^{}]*"answer"\s*:\s*"[^"]*"[^{}]*\}', raw_response, re.DOTALL)
+                json_match = re.search(r'\{\s*"answer"\s*:\s*"[^"]*"\s*\}', raw_response, re.DOTALL)
                 if json_match:
                     json_str = json_match.group(0)
                     parsed_json = json.loads(json_str)
                     
-                    reasoning = parsed_json.get("reasoning", "").strip()
-                    answer = parsed_json.get("answer", "").strip().upper()
+                    answer = parsed_json.get("answer", "").strip()
                     
-                    # Validate answer format (single letter)
-                    if len(answer) == 1 and answer.isalpha():
+                    # Extract the option letter from the answer (e.g., "A) Text" -> "A")
+                    answer_match = re.search(r'^([A-E])\)', answer)
+                    if answer_match:
+                        answer_letter = answer_match.group(1)
                         final_decision_dict = {
-                            "reasoning": reasoning,
-                            "answer": answer
+                            "reasoning": "Direct answer provided",
+                            "answer": answer_letter
                         }
-                        cprint(f"Attempt {attempt + 1}: Valid JSON response received - Answer: {answer}", "green")
+                        cprint(f"Attempt {attempt + 1}: Valid JSON response received - Answer: {answer_letter}", "green")
+                        break
+                    # Fallback: check if answer is just a single letter
+                    elif len(answer) == 1 and answer.upper() in ['A', 'B', 'C', 'D', 'E']:
+                        final_decision_dict = {
+                            "reasoning": "Direct answer provided",
+                            "answer": answer.upper()
+                        }
+                        cprint(f"Attempt {attempt + 1}: Valid JSON response received - Answer: {answer.upper()}", "green")
                         break
                     else:
                         cprint(f"Attempt {attempt + 1}: Invalid answer format '{answer}'", "yellow")
                         continue
                         
                 else:
+                    # Fallback: try to find any JSON-like structure with answer
+                    fallback_match = re.search(r'"answer"\s*:\s*"([^"]*)"', raw_response, re.IGNORECASE)
+                    if fallback_match:
+                        answer = fallback_match.group(1).strip()
+                        # Extract the option letter from the answer
+                        answer_match = re.search(r'^([A-E])\)', answer)
+                        if answer_match:
+                            answer_letter = answer_match.group(1)
+                            final_decision_dict = {
+                                "reasoning": "Direct answer provided",
+                                "answer": answer_letter
+                            }
+                            cprint(f"Attempt {attempt + 1}: Valid answer found via fallback - Answer: {answer_letter}", "green")
+                            break
+                        elif len(answer) == 1 and answer.upper() in ['A', 'B', 'C', 'D', 'E']:
+                            final_decision_dict = {
+                                "reasoning": "Direct answer provided", 
+                                "answer": answer.upper()
+                            }
+                            cprint(f"Attempt {attempt + 1}: Valid answer found via fallback - Answer: {answer.upper()}", "green")
+                            break
+                    
                     cprint(f"Attempt {attempt + 1}: No valid JSON found in response", "yellow")
                     continue
                     
