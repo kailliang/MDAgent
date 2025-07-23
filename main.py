@@ -80,15 +80,15 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
     sample_output_tokens = difficulty_output_tokens
     
     if difficulty_level == 'basic':
-        final_decision, process_input_tokens, process_output_tokens = process_basic_query(question, examplers, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_basic_query(question, args.model)
         sample_input_tokens += process_input_tokens
         sample_output_tokens += process_output_tokens
     elif difficulty_level == 'intermediate':
-        final_decision, process_input_tokens, process_output_tokens = process_intermediate_query(question, examplers, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_intermediate_query(question, args.model)
         sample_input_tokens += process_input_tokens
         sample_output_tokens += process_output_tokens
     elif difficulty_level == 'advanced':
-        final_decision, process_input_tokens, process_output_tokens = process_advanced_query(question, args.model, args)
+        final_decision, process_input_tokens, process_output_tokens = process_advanced_query(question, args.model)
         sample_input_tokens += process_input_tokens
         sample_output_tokens += process_output_tokens
     else:

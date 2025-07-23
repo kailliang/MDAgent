@@ -531,7 +531,7 @@ Provide your assessment in the following JSON format:
             cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
             return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
 
-def process_basic_query(question, examplers_data, model_to_use, args):
+def process_basic_query(question, model_to_use):
     import re
     import json
     
@@ -664,7 +664,7 @@ def process_basic_query(question, examplers_data, model_to_use, args):
     
     return final_decision_dict, sample_input_tokens, sample_output_tokens
 
-def process_intermediate_query(question, examplers_data, model_to_use, args):
+def process_intermediate_query(question, model_to_use):
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0
@@ -896,7 +896,7 @@ def process_intermediate_query(question, examplers_data, model_to_use, args):
 
     return final_decision_output, sample_input_tokens, sample_output_tokens
 
-def process_advanced_query(question, model_to_use, args):
+def process_advanced_query(question, model_to_use):
     # Reset token usage for this sample
     sample_input_tokens = 0
     sample_output_tokens = 0
