@@ -534,8 +534,8 @@ Provide your assessment in the following JSON format:
         elif 'advanced' in response.lower():
             return 'advanced', difficulty_input_tokens, difficulty_output_tokens
         else:
-            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
-            return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to basic.", "red")
+            return 'basic', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, model_to_use):
     import re
@@ -768,10 +768,82 @@ def process_intermediate_query(question, model_to_use):
     recruiter_agent.chat(recruit_prompt)
     
     num_experts_to_recruit = 3
-    recruited_text = recruiter_agent.chat(f"Question: {question}\nYou can recruit {num_experts_to_recruit} experts in different medical expertise. Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?\nAlso, you need to specify the communication structure between experts (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.\n\nFor example, if you want to recruit five experts, you answer can be like:\n1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent\n2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist\n3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent\n4. Neonatologist - Focuses on the care of newborn infants, especially those who are born prematurely or have medical issues at birth. - Hierarchy: Independent\n5. Medical Geneticist - Specializes in the study of genes and heredity. - Hierarchy: Independent\n\nPlease answer strictly in above format, and do not include your reason.")
+    recruited_text = recruiter_agent.chat(f"""Question: {question}
 
-    agents_info_raw = [agent_info.split(" - Hierarchy: ") for agent_info in recruited_text.split('\n') if agent_info.strip()]
-    agents_data_parsed = [(info[0], info[1]) if len(info) > 1 else (info[0], None) for info in agents_info_raw]
+You need to recruit {num_experts_to_recruit} medical experts with different specialties to analyze this question and collaborate on the answer. 
+
+Please return your recruitment plan in JSON format:
+
+{{
+  "experts": [
+    {{
+      "id": 1,
+      "role": "Cardiologist",
+      "expertise_description": "Specializes in heart and cardiovascular system disorders",
+      "hierarchy": "Independent"
+    }},
+    {{
+      "id": 2,
+      "role": "Pulmonologist", 
+      "expertise_description": "Specializes in respiratory system diseases",
+      "hierarchy": "Independent"
+    }},
+    {{
+      "id": 3,
+      "role": "Emergency Medicine Physician",
+      "expertise_description": "Specializes in acute care and emergency medical situations", 
+      "hierarchy": "Cardiologist > Emergency Medicine Physician"
+    }}
+  ]
+}}
+
+**Requirements:**
+- Each expert should have a unique medical specialty relevant to the question
+- Hierarchy can be "Independent" or specify relationships like "Expert1 > Expert2"
+- Return ONLY the JSON, no other text
+
+Question: {question}""")
+
+    # Parse JSON response for expert recruitment
+    try:
+        # Clean JSON response by removing markdown blocks
+        cleaned_response = recruited_text.strip()
+        if cleaned_response.startswith('```json'):
+            cleaned_response = cleaned_response[7:]
+        if cleaned_response.startswith('```'):
+            cleaned_response = cleaned_response[3:]
+        if cleaned_response.endswith('```'):
+            cleaned_response = cleaned_response[:-3]
+        
+        experts_data = json.loads(cleaned_response)
+        recruited_experts = experts_data.get('experts', [])
+        
+        if len(recruited_experts) != num_experts_to_recruit:
+            raise ValueError(f"Expected {num_experts_to_recruit} experts, got {len(recruited_experts)}")
+        
+        # Convert to expected format: [(description, hierarchy), ...]
+        agents_data_parsed = []
+        for expert in recruited_experts:
+            role = expert.get('role', 'Unknown Role')
+            description = expert.get('expertise_description', 'No description')
+            hierarchy = expert.get('hierarchy', 'Independent')
+            expert_info = f"{expert.get('id', len(agents_data_parsed)+1)}. {role} - {description}"
+            agents_data_parsed.append((expert_info, hierarchy))
+            
+    except (json.JSONDecodeError, ValueError) as e:
+        cprint(f"Warning: Failed to parse JSON recruitment response: {e}. Using fallback parsing.", "yellow")
+        # Fallback to original text parsing for robustness
+        agents_info_raw = [agent_info.split(" - Hierarchy: ") for agent_info in recruited_text.split('\n') if agent_info.strip()]
+        agents_data_parsed = [(info[0], info[1]) if len(info) > 1 else (info[0], None) for info in agents_info_raw]
+        
+        # If fallback also fails, use default experts
+        if len(agents_data_parsed) != num_experts_to_recruit:
+            cprint("Warning: Fallback parsing also failed. Using default experts.", "yellow")
+            agents_data_parsed = [
+                ("1. General Internal Medicine Physician - Specializes in comprehensive adult medical care", "Independent"),
+                ("2. Emergency Medicine Physician - Specializes in acute care and emergency situations", "Independent"),  
+                ("3. Family Medicine Physician - Specializes in primary care across all age groups", "Independent")
+            ]
 
     agent_emoji = ['\U0001F468\u200D\u2695\uFE0F', '\U0001F468\U0001F3FB\u200D\u2695\uFE0F', '\U0001F469\U0001F3FC\u200D\u2695\uFE0F', '\U0001F469\U0001F3FB\u200D\u2695\uFE0F', '\U0001f9d1\u200D\u2695\uFE0F', '\U0001f9d1\U0001f3ff\u200D\u2695\uFE0F', '\U0001f468\U0001f3ff\u200D\u2695\uFE0F', '\U0001f468\U0001f3fd\u200D\u2695\uFE0F', '\U0001f9d1\U0001f3fd\u200D\u2695\uFE0F', '\U0001F468\U0001F3FD\u200D\u2695\uFE0F']
     random.shuffle(agent_emoji)
