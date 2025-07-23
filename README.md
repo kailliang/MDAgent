@@ -1,4 +1,3 @@
-# Test Project
+# MDAgents
 
-This is a test project developed using the codebase from the NeurIPS 2024 oral paper:
-MDAgents: An Adaptive Collaboration of LLMs for Medical Decision-Making
+This is a research implementation of "MDAgents: An Adaptive Collaboration of LLMs for Medical Decision-Making" from NeurIPS 2024. The system uses multiple Large Language Models (LLMs) to collaboratively solve medical questions through three adaptive difficulty levels: basic (expert arbitration), intermediate (expert collaboration), and advanced (multi-disciplinary teams).
