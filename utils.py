@@ -18,8 +18,10 @@ import traceback   # For full traceback if other errors occur
 # Load environment variables from .env file
 load_dotenv()
 
-# Debug control - set to False to reduce verbose output
+# Debug controls - set to False to reduce verbose output
 SHOW_INTERACTION_TABLE = False
+SHOW_EXPERT_HIERARCHY = False
+SHOW_DEBATE_ROUNDS = False
 
 # Global token usage tracking
 GLOBAL_TOKEN_USAGE = {
@@ -551,16 +553,16 @@ def process_basic_query(question, model_to_use):
     # Enhanced prompt for JSON output with strict formatting
     prompt = """You are a medical expert. Analyze the following multiple choice question and provide your response in exactly this JSON format:
 
+    **Question:** {}
+
 {{
-  "reasoning": "Your step-by-step medical analysis in no more than 500 words",
-  "answer": "X"
+  "answer": "X) example answer"
 }}
 
 **Requirements:**
-- Answer must be a single letter (A, B, C, D, E, etc.) corresponding to one of the provided options
+- Answer must be one of the provided options
 - Return ONLY the JSON, no other text
 
-**Question:** {}
 """
     
     max_retries = 2
@@ -675,7 +677,7 @@ def process_intermediate_query(question, model_to_use):
     recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent.chat(recruit_prompt)
     
-    num_experts_to_recruit = 5
+    num_experts_to_recruit = 3
     recruited_text = recruiter_agent.chat(f"Question: {question}\nYou can recruit {num_experts_to_recruit} experts in different medical expertise. Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?\nAlso, you need to specify the communication structure between experts (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.\n\nFor example, if you want to recruit five experts, you answer can be like:\n1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent\n2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist\n3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent\n4. Neonatologist - Focuses on the care of newborn infants, especially those who are born prematurely or have medical issues at birth. - Hierarchy: Independent\n5. Medical Geneticist - Specializes in the study of genes and heredity. - Hierarchy: Independent\n\nPlease answer in above format, and do not include your reason.")
 
     agents_info_raw = [agent_info.split(" - Hierarchy: ") for agent_info in recruited_text.split('\n') if agent_info.strip()]
@@ -731,25 +733,27 @@ def process_intermediate_query(question, model_to_use):
 
     print()
     cprint("[INFO] Step 2. Collaborative Decision Making", 'yellow', attrs=['blink'])
-    cprint("[INFO] Step 2.1. Hierarchy Selection", 'yellow', attrs=['blink'])
-    if hierarchy_agents_nodes:
-        try:
-            from pptree import print_tree
-            print_tree(hierarchy_agents_nodes[0], horizontal=False)
-        except ImportError:
-            cprint("pptree not installed or print_tree not found. Skipping hierarchy print.", "yellow")
-        except Exception as e:
-            cprint(f"Error printing tree: {e}", "red")
+    if SHOW_EXPERT_HIERARCHY:
+        cprint("[INFO] Step 2.1. Hierarchy Selection", 'yellow', attrs=['blink'])
+        if hierarchy_agents_nodes:
+            try:
+                from pptree import print_tree
+                print_tree(hierarchy_agents_nodes[0], horizontal=False)
+            except ImportError:
+                cprint("pptree not installed or print_tree not found. Skipping hierarchy print.", "yellow")
+            except Exception as e:
+                cprint(f"Error printing tree: {e}", "red")
 
-    print()
+        print()
 
-    num_rounds = 5
-    num_turns = 5
+    num_rounds = 3
+    num_turns = 3
     num_active_agents = len(medical_agents_list)
 
     interaction_log = {f'Round {r}': {f'Turn {t}': {f'Agent {s}': {f'Agent {trg}': None for trg in range(1, num_active_agents + 1)} for s in range(1, num_active_agents + 1)} for t in range(1, num_turns + 1)} for r in range(1, num_rounds + 1)}
 
-    cprint("[INFO] Step 2.2. Participatory Debate", 'yellow', attrs=['blink'])
+    if SHOW_DEBATE_ROUNDS:
+        cprint("[INFO] Step 2.2. Participatory Debate", 'yellow', attrs=['blink'])
 
     round_opinions_log = {r: {} for r in range(1, num_rounds+1)}
     initial_report_str = ""
@@ -763,7 +767,8 @@ def process_intermediate_query(question, model_to_use):
 
     final_answer_map = None
     for r_idx in range(1, num_rounds+1):
-        print(f"== Round {r_idx} ==")
+        if SHOW_DEBATE_ROUNDS:
+            print(f"== Round {r_idx} ==")
         round_name_str = f"Round {r_idx}"
         
         summarizer_agent = Agent(instruction="You are a medical assistant who excels at summarizing and synthesizing based on multiple experts from various domain experts.", role="medical assistant", model_info=model_to_use)
@@ -775,7 +780,8 @@ def process_intermediate_query(question, model_to_use):
         num_participated_this_round = 0
         for t_idx in range(num_turns):
             turn_name_str = f"Turn {t_idx + 1}"
-            print(f"|_{turn_name_str}")
+            if SHOW_DEBATE_ROUNDS:
+                print(f"|_{turn_name_str}")
 
             num_participated_this_turn = 0
             for agent_idx, agent_instance_loop in enumerate(medical_agents_list):
@@ -795,14 +801,16 @@ def process_intermediate_query(question, model_to_use):
                             
                             source_emoji = agent_emoji[agent_idx % len(agent_emoji)]
                             target_emoji = agent_emoji[target_agent_actual_idx % len(agent_emoji)]
-                            print(f" Agent {agent_idx+1} ({source_emoji} {medical_agents_list[agent_idx].role}) -> Agent {target_expert_idx_chosen} ({target_emoji} {medical_agents_list[target_agent_actual_idx].role}) : {specific_question_to_expert}")
+                            if SHOW_DEBATE_ROUNDS:
+                                print(f" Agent {agent_idx+1} ({source_emoji} {medical_agents_list[agent_idx].role}) -> Agent {target_expert_idx_chosen} ({target_emoji} {medical_agents_list[target_agent_actual_idx].role}) : {specific_question_to_expert}")
                             interaction_log[round_name_str][turn_name_str][f'Agent {agent_idx+1}'][f'Agent {target_expert_idx_chosen}'] = specific_question_to_expert
                         else:
                             cprint(f"Agent {agent_idx+1} chose an invalid expert index: {target_expert_idx_chosen}", "yellow")
                 
                     num_participated_this_turn += 1
                 else:
-                    print(f" Agent {agent_idx+1} ({agent_emoji[agent_idx % len(agent_emoji)]} {agent_instance_loop.role}): \U0001f910")
+                    if SHOW_DEBATE_ROUNDS:
+                        print(f" Agent {agent_idx+1} ({agent_emoji[agent_idx % len(agent_emoji)]} {agent_instance_loop.role}): \U0001f910")
 
             num_participated_this_round = num_participated_this_turn
             if num_participated_this_turn == 0:
@@ -871,8 +879,9 @@ def process_intermediate_query(question, model_to_use):
     majority_vote_response = moderator_decision_dict.get(0.0, "Error: Moderator failed to provide a decision.")
     final_decision_output = {'majority_vote': majority_vote_response}
 
-    print(f"{'\U0001F468\u200D\u2696\uFE0F'} moderator's final decision: {majority_vote_response}")
-    print()
+    if SHOW_DEBATE_ROUNDS:
+        print(f"{'\U0001F468\u200D\u2696\uFE0F'} moderator's final decision: {majority_vote_response}")
+        print()
 
     # Calculate total token usage for this sample
     recruiter_usage = recruiter_agent.get_token_usage()
