@@ -76,8 +76,8 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
 
     # Determine difficulty using the utility function
     # The 'args.difficulty' string is passed, and 'determine_difficulty' handles 'adaptive' logic.
-    # 'determine_difficulty' uses 'gemini-2.5-flash-lite-preview-06-17' internally for adaptive assessment.
-    difficulty_level, difficulty_input_tokens, difficulty_output_tokens = determine_difficulty(question, args.difficulty)
+    # 'determine_difficulty' now uses the specified model for adaptive assessment.
+    difficulty_level, difficulty_input_tokens, difficulty_output_tokens = determine_difficulty(question, args.difficulty, args.model)
     cprint(f"Determined difficulty: {difficulty_level}", "yellow")
 
     # Check if we should skip this difficulty level

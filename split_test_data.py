@@ -48,7 +48,7 @@ def main():
             # Create question format (same as in main.py)
             question, _ = create_question(sample, 'medqa')
             
-            # Determine difficulty using adaptive mode
+            # Determine difficulty using adaptive mode with default model
             difficulty, input_tokens, output_tokens = determine_difficulty(question, 'adaptive')
             
             # Add difficulty info to sample

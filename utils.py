@@ -468,7 +468,7 @@ def create_question(sample, dataset):
         return question, None
     return sample.get('question', "No question provided in sample."), None
 
-def determine_difficulty(question, difficulty):
+def determine_difficulty(question, difficulty, model_to_use='gemini-2.5-flash-lite-preview-06-17'):
     if difficulty != 'adaptive':
         return difficulty, 0, 0  # Return difficulty with zero token usage for non-adaptive
     
@@ -492,7 +492,7 @@ Provide your assessment in the following JSON format:
 - Difficulty must be exactly one of: basic, intermediate, advanced
 """
     
-    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and determines the complexity level of medical queries.', role='medical expert', model_info='gemini-2.5-flash-lite-preview-06-17')
+    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and determines the complexity level of medical queries.', role='medical expert', model_info=model_to_use)
     medical_agent.chat('You are a medical expert who conducts initial assessment and determines the complexity level of medical queries.')
     response_dict = medical_agent.temp_responses(difficulty_prompt)
     response = response_dict.get(0.0, "")
@@ -549,7 +549,7 @@ def process_basic_query(question, model_to_use):
     cprint("[INFO] Step 1. Expert Recruitment", 'yellow', attrs=['blink'])
     recruit_prompt = "You are an experienced medical expert who recruits medical specialists to solve the given medical query."
     
-    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info='gemini-2.5-flash-lite-preview-06-17')
+    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent.chat(recruit_prompt)
     
     num_experts_to_recruit = 3
@@ -764,7 +764,7 @@ def process_intermediate_query(question, model_to_use):
     cprint("[INFO] Step 1. Expert Recruitment", 'yellow', attrs=['blink'])
     recruit_prompt = "You are an experienced medical expert who recruits a group of experts with diverse identity and ask them to discuss and solve the given medical query."
     
-    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info='gemini-2.5-flash-lite-preview-06-17')
+    recruiter_agent = Agent(instruction=recruit_prompt, role='recruiter', model_info=model_to_use)
     recruiter_agent.chat(recruit_prompt)
     
     num_experts_to_recruit = 3
