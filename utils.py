@@ -530,8 +530,8 @@ Provide your assessment in the following JSON format:
         elif 'advanced' in response.lower():
             return 'advanced', difficulty_input_tokens, difficulty_output_tokens
         else:
-            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to intermediate.", "yellow")
-            return 'intermediate', difficulty_input_tokens, difficulty_output_tokens
+            cprint(f"Warning: Could not parse difficulty from response: '{response}'. Defaulting to basic.", "yellow")
+            return 'basic', difficulty_input_tokens, difficulty_output_tokens
 
 def process_basic_query(question, model_to_use):
     import re
@@ -626,8 +626,8 @@ def process_basic_query(question, model_to_use):
                     
                     answer = parsed_json.get("answer", "").strip()
                     
-                    # Extract the option letter from the answer (e.g., "A) Text" -> "A")
-                    answer_match = re.search(r'^([A-E])\)', answer)
+                    # Extract the option letter from the answer (supports both "A) Text" and "(A) Text" formats)
+                    answer_match = re.search(r'^\(?([A-E])\)?', answer)
                     if answer_match:
                         answer_letter = answer_match.group(1)
                         final_decision_dict = {
@@ -653,8 +653,8 @@ def process_basic_query(question, model_to_use):
                     fallback_match = re.search(r'"answer"\s*:\s*"([^"]*)"', raw_response, re.IGNORECASE)
                     if fallback_match:
                         answer = fallback_match.group(1).strip()
-                        # Extract the option letter from the answer
-                        answer_match = re.search(r'^([A-E])\)', answer)
+                        # Extract the option letter from the answer (supports both "A) Text" and "(A) Text" formats)
+                        answer_match = re.search(r'^\(?([A-E])\)?', answer)
                         if answer_match:
                             answer_letter = answer_match.group(1)
                             final_decision_dict = {
