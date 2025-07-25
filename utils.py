@@ -20,6 +20,7 @@ load_dotenv()
 
 # Debug/Visualization settings
 SHOW_INTERACTION_TABLE = False  # Set to True to display agent interaction table in intermediate mode
+SHOW_PROMPTS = False  # Set to True to display every prompt sent to the model
 
 # Global token usage tracking
 GLOBAL_TOKEN_USAGE = {
@@ -126,6 +127,16 @@ class Agent:
         if self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             for _ in range(10):
                 try:
+                    # Debug print for prompt
+                    if SHOW_PROMPTS:
+                        cprint(f"\n{'='*60}", "yellow")
+                        cprint(f"🤖 PROMPT DEBUG - Agent: {self.role}", "yellow", attrs=['bold'])
+                        cprint(f"Method: chat()", "cyan")
+                        cprint(f"Model: {self.model_info}", "cyan")
+                        cprint(f"{'='*60}", "yellow")
+                        cprint(f"{str(message)}", "white")
+                        cprint(f"{'='*60}", "yellow")
+                    
                     # Gemini expects UTF-8 strings for messages.
                     response = self._chat.send_message(str(message))
                     
@@ -158,6 +169,18 @@ class Agent:
             # model_name = "gpt-4o-mini"
 
             try:
+                # Debug print for prompt
+                if SHOW_PROMPTS:
+                    cprint(f"\n{'='*60}", "yellow")
+                    cprint(f"🤖 PROMPT DEBUG - Agent: {self.role}", "yellow", attrs=['bold'])
+                    cprint(f"Method: chat()", "cyan")
+                    cprint(f"Model: {self.model_info}", "cyan")
+                    cprint(f"{'='*60}", "yellow")
+                    cprint(f"Full message history:", "cyan")
+                    for i, msg in enumerate(api_call_messages):
+                        cprint(f"Message {i+1} [{msg['role']}]: {msg['content'][:200]}{'...' if len(msg['content']) > 200 else ''}", "white")
+                    cprint(f"{'='*60}", "yellow")
+                
                 response = self.client.chat.completions.create(
                     model=self.model_info,
                     messages=api_call_messages,
@@ -199,6 +222,18 @@ class Agent:
             # model_name = "gpt-4o-mini"
 
             try:
+                # Debug print for prompt
+                if SHOW_PROMPTS:
+                    cprint(f"\n{'='*60}", "yellow")
+                    cprint(f"🤖 PROMPT DEBUG - Agent: {self.role}", "yellow", attrs=['bold'])
+                    cprint(f"Method: temp_responses()", "cyan")
+                    cprint(f"Model: {self.model_info}", "cyan")
+                    cprint(f"{'='*60}", "yellow")
+                    cprint(f"Full message history:", "cyan")
+                    for i, msg in enumerate(api_call_messages):
+                        cprint(f"Message {i+1} [{msg['role']}]: {msg['content'][:200]}{'...' if len(msg['content']) > 200 else ''}", "white")
+                    cprint(f"{'='*60}", "yellow")
+                
                 response = self.client.chat.completions.create(
                     model=self.model_info,
                     messages=api_call_messages,
@@ -224,6 +259,16 @@ class Agent:
         
         elif self.model_info in ['gemini-2.5-flash', 'gemini-2.5-flash-lite-preview-06-17']:
             try:
+                # Debug print for prompt
+                if SHOW_PROMPTS:
+                    cprint(f"\n{'='*60}", "yellow")
+                    cprint(f"🤖 PROMPT DEBUG - Agent: {self.role}", "yellow", attrs=['bold'])
+                    cprint(f"Method: temp_responses()", "cyan")
+                    cprint(f"Model: {self.model_info}", "cyan")
+                    cprint(f"{'='*60}", "yellow")
+                    cprint(f"{str(message)}", "white")
+                    cprint(f"{'='*60}", "yellow")
+                
                 # Configure generation with temperature=0.0 for deterministic responses
                 generation_config = genai.GenerationConfig(temperature=0.0)
                 response = self._chat.send_message(str(message), generation_config=generation_config)

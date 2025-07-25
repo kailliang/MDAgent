@@ -117,9 +117,9 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
         results.append({
             'question_id': sample.get('id', f'sample_{no+1}'), # Assuming samples might have an ID
             'question': question,
-            'label': sample.get('answer_idx', None) if args.dataset == 'medqa' else sample.get('label', None),
+            'label': sample.get('answer_idx', None) if args.dataset in ['medqa', 'medbullets'] else sample.get('label', None),
             'answer': sample.get('answer', None),
-            'options': sample.get('options', None) if args.dataset == 'medqa' else None,
+            'options': sample.get('options', None) if args.dataset in ['medqa', 'medbullets'] else None,
             'response': "Error: No decision processed",
             'difficulty': difficulty_level,
             'token_usage': {
@@ -138,7 +138,7 @@ for no, sample in enumerate(tqdm(test_qa[:num_to_process], desc="Processing Samp
     cprint(f"Sample {no+1} Token Usage - Input: {sample_input_tokens}, Output: {sample_output_tokens}, Total: {sample_input_tokens + sample_output_tokens}", "cyan")
     # cprint(f"Final decision for sample {no+1}: {str(final_decision)[:100]}...", "green")
 
-    if args.dataset == 'medqa':
+    if args.dataset in ['medqa', 'medbullets']:
         results.append({
             'question_id': sample.get('id', f'sample_{no+1}'),
             'question': question,
