@@ -48,8 +48,8 @@ pdf/
 imgs/
 evaluation/
 .env
-# claude-instructions.md
-# CLAUDE.md
+claude-instructions.md
+CLAUDE.md
 
 # Large files
 *.jsonl
