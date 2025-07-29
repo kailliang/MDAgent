@@ -4,13 +4,6 @@ A multi-agent system developed and improved over the original NeurIPS 2024 paper
 
 ## 🏆 Performance Results
 
-### Exceptional Results with Gemini-2.5-Flash
-- **Overall Accuracy**: 93.67% - breakthrough performance
-- **Basic Mode**: 93.29% accuracy (292/313 samples)
-- **Intermediate Mode**: 100.00% accuracy (17/17 samples) - perfect performance
-- **Advanced Mode**: 100.00% accuracy (2/2 samples) - perfect performance
-- **Token Efficiency**: 7.23M total tokens
-
 ### Cost-Effective Results with Gemini-2.5-Flash-Lite
 - **Overall Accuracy**: 84.04% across all difficulty levels  
 - **Basic Mode**: 87.05% accuracy with 3-expert + arbitrator system
@@ -18,13 +11,20 @@ A multi-agent system developed and improved over the original NeurIPS 2024 paper
 - **Advanced Mode**: 75.76% accuracy with multi-disciplinary teams
 - **Token Efficiency**: 8.67M total tokens
 
+### Exceptional Results with Gemini-2.5-Flash
+- **Overall Accuracy**: 95.18% - breakthrough performance
+- **Basic Mode**: 94.89% accuracy (297/313 samples)
+- **Intermediate Mode**: 100.00% accuracy (17/17 samples) - perfect performance
+- **Advanced Mode**: 100.00% accuracy (2/2 samples) - perfect performance
+- **Token Efficiency**: 7.23M total tokens
+  
 ## ⭐ Ultimate Branch Achievements
 
 ### Performance vs Original Paper (MedQA, 332 samples)
-- **This Implementation (Gemini-2.5-Flash)**: 93.67% accuracy, 7.23M tokens - **breakthrough results**
+- **This Implementation (Gemini-2.5-Flash)**: 95.18% accuracy, 7.23M tokens - **breakthrough results**
 - **This Implementation (Gemini-2.5-Flash-Lite)**: 84.04% accuracy, 8.67M tokens - **cost-effective excellence**
 - **Original Paper Method**: 79.45% accuracy, 67.44M tokens
-- **Best Improvement**: +14.22% accuracy with **89.3% fewer tokens** using Gemini-2.5-Flash
+- **Best Improvement**: +15.73% accuracy with **89.3% fewer tokens** using Gemini-2.5-Flash
 - **Cost-Effective Improvement**: +4.59% accuracy with **87.1% fewer tokens** using Gemini-2.5-Flash-Lite
 
 ### Key Innovations
